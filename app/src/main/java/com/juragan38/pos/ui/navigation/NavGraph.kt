@@ -1,8 +1,10 @@
 package com.juragan38.pos.ui.navigation
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -15,6 +17,7 @@ import com.juragan38.pos.ui.screen.reports.ReportsScreen
 import com.juragan38.pos.ui.screen.splash.SplashScreen
 import com.juragan38.pos.ui.screen.transactions.TransactionsScreen
 import com.juragan38.pos.ui.screen.users.UsersScreen
+import kotlinx.coroutines.delay
 
 object Routes {
     const val SPLASH = "splash"
@@ -34,14 +37,15 @@ fun JuraganNavHost(viewModel: AppViewModel) {
 
     NavHost(navController = navController, startDestination = Routes.SPLASH) {
         composable(Routes.SPLASH) {
-            SplashScreen(
-                onFinished = {
-                    val target = if (session == null) Routes.LOGIN else Routes.DASHBOARD
-                    navController.navigate(target) {
-                        popUpTo(Routes.SPLASH) { inclusive = true }
-                    }
+            val currentSession by rememberUpdatedState(session)
+            LaunchedEffect(Unit) {
+                delay(1200)
+                val target = if (currentSession == null) Routes.LOGIN else Routes.DASHBOARD
+                navController.navigate(target) {
+                    popUpTo(Routes.SPLASH) { inclusive = true }
                 }
-            )
+            }
+            SplashScreen()
         }
 
         composable(Routes.LOGIN) {

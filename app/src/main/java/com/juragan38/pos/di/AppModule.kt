@@ -2,6 +2,8 @@ package com.juragan38.pos.di
 
 import android.content.Context
 import androidx.room.Room
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
 import com.juragan38.pos.data.local.AppDatabase
 import dagger.Module
 import dagger.Provides
@@ -24,4 +26,12 @@ object AppModule {
         Room.databaseBuilder(context, AppDatabase::class.java, "juragan38.db")
             .fallbackToDestructiveMigration()
             .build()
+
+    @Provides
+    @Singleton
+    fun provideAuth(): FirebaseAuth = FirebaseAuth.getInstance()
+
+    @Provides
+    @Singleton
+    fun provideFirestore(): FirebaseFirestore = FirebaseFirestore.getInstance()
 }

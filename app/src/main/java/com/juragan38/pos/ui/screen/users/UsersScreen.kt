@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.sp
 import com.juragan38.pos.data.local.User
 import com.juragan38.pos.ui.AppViewModel
 import com.juragan38.pos.ui.theme.Amber500
+import com.juragan38.pos.ui.theme.Blue700
 import com.juragan38.pos.ui.theme.Green600
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -99,7 +100,7 @@ fun UsersScreen(viewModel: AppViewModel, onBack: () -> Unit) {
         ) {
             item {
                 Text(
-                    "Total ${users.size} akun. Akun baru bisa langsung dipakai login.",
+                    "Total ${users.size} akun aktif. Akun baru otomatis bisa login di HP lain.",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = 4.dp)
@@ -167,7 +168,7 @@ fun UsersScreen(viewModel: AppViewModel, onBack: () -> Unit) {
                             IconButton(onClick = { deleting = user }) {
                                 Icon(
                                     Icons.Default.Delete,
-                                    contentDescription = "Hapus akun",
+                                    contentDescription = "Nonaktifkan akun",
                                     tint = MaterialTheme.colorScheme.error
                                 )
                             }
@@ -184,8 +185,8 @@ fun UsersScreen(viewModel: AppViewModel, onBack: () -> Unit) {
         UserFormDialog(
             initial = editing,
             onDismiss = { showForm = false },
-            onSave = { user, onResult ->
-                viewModel.saveUser(user) { error ->
+            onSave = { user, password, onResult ->
+                viewModel.saveUser(user, password) { error ->
                     onResult(error)
                     if (error == null) showForm = false
                 }
@@ -197,10 +198,15 @@ fun UsersScreen(viewModel: AppViewModel, onBack: () -> Unit) {
         var error by remember(user.id) { mutableStateOf<String?>(null) }
         AlertDialog(
             onDismissRequest = { deleting = null },
-            title = { Text("Hapus Akun") },
+            title = { Text("Nonaktifkan Akun") },
             text = {
                 Column {
-                    Text("Yakin hapus akun ${user.fullName} (@${user.username})?")
+                    Text("Akun ${user.fullName} (@${user.username}) tidak akan bisa login lagi.")
+                    Text(
+                        "Data transaksi lamanya tetap tersimpan.",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                     error?.let {
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
@@ -215,7 +221,7 @@ fun UsersScreen(viewModel: AppViewModel, onBack: () -> Unit) {
                         }
                     }
                 ) {
-                    Text("Hapus", color = MaterialTheme.colorScheme.error)
+                    Text("Nonaktifkan", color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
@@ -229,20 +235,23 @@ fun UsersScreen(viewModel: AppViewModel, onBack: () -> Unit) {
 private fun UserFormDialog(
     initial: User?,
     onDismiss: () -> Unit,
-    onSave: (User, (String?) -> Unit) -> Unit
+    onSave: (User, String?, (String?) -> Unit) -> Unit
 ) {
     var fullName by remember { mutableStateOf(initial?.fullName.orEmpty()) }
     var username by remember { mutableStateOf(initial?.username.orEmpty()) }
-    var password by remember { mutableStateOf(initial?.password.orEmpty()) }
+    var password by remember { mutableStateOf("") }
     var role by remember { mutableStateOf(initial?.role ?: "KASIR") }
     var saving by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
 
-    val valid = fullName.isNotBlank() && username.isNotBlank() && password.length >= 5
+    val isNew = initial == null
+    val valid = fullName.isNotBlank() &&
+        username.isNotBlank() &&
+        (!isNew || password.length >= 5)
 
     AlertDialog(
         onDismissRequest = { if (!saving) onDismiss() },
-        title = { Text(if (initial == null) "Tambah Akun" else "Ubah Akun") },
+        title = { Text(if (isNew) "Tambah Akun" else "Ubah Akun") },
         text = {
             Column {
                 OutlinedTextField(
@@ -255,20 +264,36 @@ private fun UserFormDialog(
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedTextField(
                     value = username,
-                    onValueChange = { username = it.filter { c -> !c.isWhitespace() } },
+                    onValueChange = { if (isNew) username = it.filter { c -> !c.isWhitespace() } },
                     label = { Text("Username") },
                     singleLine = true,
+                    enabled = isNew,
                     modifier = Modifier.fillMaxWidth()
                 )
+                if (!isNew) {
+                    Text(
+                        "Username tidak bisa diubah (terikat akun login).",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 Spacer(modifier = Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = password,
-                    onValueChange = { password = it },
-                    label = { Text("Password") },
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
-                    modifier = Modifier.fillMaxWidth()
-                )
+                if (isNew) {
+                    OutlinedTextField(
+                        value = password,
+                        onValueChange = { password = it },
+                        label = { Text("Password (min. 5 karakter)") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                } else {
+                    Text(
+                        "Password tidak dapat diubah dari sini. Buat akun baru bila karyawan lupa password.",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 Spacer(modifier = Modifier.height(10.dp))
                 Text("Role", fontSize = 12.sp, fontWeight = FontWeight.Medium)
                 Spacer(modifier = Modifier.height(4.dp))
@@ -294,12 +319,13 @@ private fun UserFormDialog(
                     error = null
                     onSave(
                         User(
-                            id = initial?.id ?: 0,
+                            id = initial?.id.orEmpty(),
                             username = username.trim(),
-                            password = password.trim(),
                             fullName = fullName.trim(),
-                            role = role
-                        )
+                            role = role,
+                            active = true
+                        ),
+                        if (isNew) password.trim() else null
                     ) { err ->
                         saving = false
                         error = err
@@ -317,7 +343,7 @@ private fun UserFormDialog(
 }
 
 private fun roleColor(role: String): Color = when (role) {
-    "ADMIN" -> Color(0xFF1F4E79)
+    "ADMIN" -> Blue700
     "MANAJER" -> Amber500
     else -> Green600
 }

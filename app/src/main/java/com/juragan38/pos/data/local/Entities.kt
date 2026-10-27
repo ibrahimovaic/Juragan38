@@ -3,18 +3,22 @@ package com.juragan38.pos.data.local
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
+/**
+ * id = UID Firebase Auth sekaligus document id di Firestore.
+ * Password TIDAK disimpan di sini (dikelola Firebase Auth).
+ */
 @Entity(tableName = "users")
 data class User(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    @PrimaryKey val id: String = "",
     val username: String,
-    val password: String,
     val fullName: String,
-    val role: String
+    val role: String,
+    val active: Boolean = true
 )
 
 @Entity(tableName = "products")
 data class Product(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    @PrimaryKey val id: String = "",
     val name: String,
     val category: String = "Umum",
     val price: Double = 0.0,
@@ -24,7 +28,7 @@ data class Product(
 
 @Entity(tableName = "transactions")
 data class Transaction(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    @PrimaryKey val id: String = "",
     val invoiceNo: String,
     val timestamp: Long,
     val cashier: String,
@@ -39,8 +43,8 @@ data class Transaction(
 @Entity(tableName = "transaction_items")
 data class TransactionItem(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val transactionId: Long,
-    val productId: Long,
+    val transactionId: String,
+    val productId: String,
     val productName: String,
     val price: Double,
     val cost: Double,
@@ -49,7 +53,7 @@ data class TransactionItem(
 )
 
 data class CartItem(
-    val productId: Long,
+    val productId: String,
     val name: String,
     val price: Double,
     val cost: Double,

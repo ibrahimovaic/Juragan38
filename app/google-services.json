@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "957762147654",
+    "project_id": "juragan38",
+    "storage_bucket": "juragan38.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:957762147654:android:9e62becf4a8d916321c147",
+        "android_client_info": {
+          "package_name": "com.juragan38.pos"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD1hzBFPoL-n6J9p9gGCpfgZe8IcWkwfwM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

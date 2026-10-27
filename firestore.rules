@@ -1,0 +1,48 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function role() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function isAdmin() {
+      return signedIn() && role() == 'ADMIN';
+    }
+
+    function isManager() {
+      return signedIn() && (role() == 'ADMIN' || role() == 'MANAJER');
+    }
+
+    // Profil akun. Kredensial (password) dikelola Firebase Auth, bukan di sini.
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || role() == 'ADMIN');
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /products/{id} {
+      allow read: if signedIn();
+      allow create, delete: if isManager();
+      // Kasir hanya boleh mengubah stok (saat checkout)
+      allow update: if isManager() ||
+        (signedIn() &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock']));
+    }
+
+    match /transactions/{id} {
+      allow read: if signedIn();
+      allow create: if signedIn();
+      allow update, delete: if false;
+
+      match /items/{itemId} {
+        allow read: if signedIn();
+        allow create: if signedIn();
+        allow update, delete: if false;
+      }
+    }
+  }
+}

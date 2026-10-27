@@ -126,10 +126,17 @@ fun LoginScreen(viewModel: AppViewModel, onLoggedIn: () -> Unit) {
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
-                Text("Akun Demo", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                Text("Admin   : admin / admin123", fontSize = 12.sp)
-                Text("Kasir   : kasir / kasir123", fontSize = 12.sp)
-                Text("Manajer : manajer / manajer123", fontSize = 12.sp)
+                Text("Login Terhubung Server", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                Text(
+                    "Akun tersinkron antar HP. Minta Admin membuatkan akun lewat menu Manajemen Akun.",
+                    fontSize = 12.sp
+                )
+                Text(
+                    "Login pertama memerlukan koneksi internet.",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
             }
         }
 

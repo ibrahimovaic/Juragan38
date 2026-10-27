@@ -266,7 +266,7 @@ private fun ProductFormDialog(
                 onClick = {
                     onSave(
                         Product(
-                            id = initial?.id ?: 0,
+                            id = initial?.id.orEmpty(),
                             name = name.trim(),
                             category = category.ifBlank { "Umum" }.trim(),
                             price = price.toDoubleOrNull() ?: 0.0,

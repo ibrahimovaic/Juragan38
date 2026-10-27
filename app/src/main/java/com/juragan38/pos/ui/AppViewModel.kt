@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -42,9 +43,19 @@ class AppViewModel @Inject constructor(
     private val _loginError = MutableStateFlow<String?>(null)
     val loginError: StateFlow<String?> = _loginError.asStateFlow()
 
+    private val _syncing = MutableStateFlow(false)
+    val syncing: StateFlow<Boolean> = _syncing.asStateFlow()
+
     init {
         viewModelScope.launch {
-            runCatching { repository.seedIfNeeded() }
+            if (!repository.hasSession()) {
+                sessionManager.clear()
+                return@launch
+            }
+            val saved = sessionManager.session.first()
+            if (saved != null) {
+                repository.startRealtimeSync(viewModelScope, saved.role)
+            }
         }
     }
 
@@ -55,19 +66,26 @@ class AppViewModel @Inject constructor(
                 _loginError.value = "Username dan password wajib diisi"
                 return@launch
             }
-            runCatching { repository.seedIfNeeded() }
-            val user = runCatching { repository.login(username.trim(), password) }.getOrNull()
-            if (user == null) {
-                _loginError.value = "Username atau password salah"
-            } else {
+            _syncing.value = true
+            try {
+                val user = repository.login(username.trim(), password)
                 sessionManager.save(Session(user.fullName, user.username, user.role))
+                repository.startRealtimeSync(viewModelScope, user.role)
+                if (user.role == "ADMIN") {
+                    repository.prepareFirstAdminData()
+                }
                 onSuccess()
+            } catch (e: Exception) {
+                _loginError.value = e.message ?: "Gagal masuk"
+            } finally {
+                _syncing.value = false
             }
         }
     }
 
     fun logout() {
         viewModelScope.launch {
+            repository.logout()
             sessionManager.clear()
             _cart.value = emptyList()
         }
@@ -133,9 +151,9 @@ class AppViewModel @Inject constructor(
         viewModelScope.launch { runCatching { repository.deleteProduct(product) } }
     }
 
-    fun saveUser(user: User, onResult: (String?) -> Unit) {
+    fun saveUser(user: User, password: String?, onResult: (String?) -> Unit) {
         viewModelScope.launch {
-            val error = runCatching { repository.saveUser(user) }
+            val error = runCatching { repository.saveUser(user, password) }
                 .getOrElse { it.message ?: "Gagal menyimpan akun" }
             onResult(error)
         }
