@@ -7,6 +7,7 @@ import com.juragan38.pos.data.SessionManager
 import com.juragan38.pos.data.local.CartItem
 import com.juragan38.pos.data.local.Product
 import com.juragan38.pos.data.local.Transaction
+import com.juragan38.pos.data.local.User
 import com.juragan38.pos.data.repository.PosRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,6 +28,9 @@ class AppViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val transactions: StateFlow<List<Transaction>> = repository.transactions
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val users: StateFlow<List<User>> = repository.users
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val session: StateFlow<Session?> = sessionManager.session
@@ -127,5 +131,21 @@ class AppViewModel @Inject constructor(
 
     fun deleteProduct(product: Product) {
         viewModelScope.launch { runCatching { repository.deleteProduct(product) } }
+    }
+
+    fun saveUser(user: User, onResult: (String?) -> Unit) {
+        viewModelScope.launch {
+            val error = runCatching { repository.saveUser(user) }
+                .getOrElse { it.message ?: "Gagal menyimpan akun" }
+            onResult(error)
+        }
+    }
+
+    fun deleteUser(user: User, onResult: (String?) -> Unit) {
+        viewModelScope.launch {
+            val error = runCatching { repository.deleteUser(user) }
+                .getOrElse { it.message ?: "Gagal menghapus akun" }
+            onResult(error)
+        }
     }
 }

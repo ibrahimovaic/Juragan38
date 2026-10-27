@@ -14,6 +14,7 @@ import com.juragan38.pos.ui.screen.products.ProductsScreen
 import com.juragan38.pos.ui.screen.reports.ReportsScreen
 import com.juragan38.pos.ui.screen.splash.SplashScreen
 import com.juragan38.pos.ui.screen.transactions.TransactionsScreen
+import com.juragan38.pos.ui.screen.users.UsersScreen
 
 object Routes {
     const val SPLASH = "splash"
@@ -23,6 +24,7 @@ object Routes {
     const val PRODUCTS = "products"
     const val REPORTS = "reports"
     const val TRANSACTIONS = "transactions"
+    const val USERS = "users"
 }
 
 @Composable
@@ -60,6 +62,7 @@ fun JuraganNavHost(viewModel: AppViewModel) {
                 onOpenProducts = { navController.navigate(Routes.PRODUCTS) },
                 onOpenReports = { navController.navigate(Routes.REPORTS) },
                 onOpenTransactions = { navController.navigate(Routes.TRANSACTIONS) },
+                onOpenUsers = { navController.navigate(Routes.USERS) },
                 onLogout = {
                     viewModel.logout()
                     navController.navigate(Routes.LOGIN) {
@@ -83,6 +86,10 @@ fun JuraganNavHost(viewModel: AppViewModel) {
 
         composable(Routes.TRANSACTIONS) {
             TransactionsScreen(viewModel = viewModel, onBack = { navController.popBackStack() })
+        }
+
+        composable(Routes.USERS) {
+            UsersScreen(viewModel = viewModel, onBack = { navController.popBackStack() })
         }
     }
 }

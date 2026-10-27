@@ -18,6 +18,24 @@ interface UserDao {
 
     @Query("SELECT COUNT(*) FROM users")
     suspend fun count(): Int
+
+    @Query("SELECT * FROM users ORDER BY role ASC, fullName ASC")
+    fun all(): Flow<List<User>>
+
+    @Query("SELECT * FROM users WHERE username = :username LIMIT 1")
+    suspend fun byUsername(username: String): User?
+
+    @Query("SELECT * FROM users WHERE id = :id LIMIT 1")
+    suspend fun byId(id: Long): User?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(user: User): Long
+
+    @Query("DELETE FROM users WHERE id = :id")
+    suspend fun deleteById(id: Long)
+
+    @Query("SELECT COUNT(*) FROM users WHERE role = 'ADMIN'")
+    suspend fun adminCount(): Int
 }
 
 @Dao

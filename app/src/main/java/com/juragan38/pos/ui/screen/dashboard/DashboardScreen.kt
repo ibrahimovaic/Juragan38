@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Assessment
 import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -53,6 +54,7 @@ fun DashboardScreen(
     onOpenProducts: () -> Unit,
     onOpenReports: () -> Unit,
     onOpenTransactions: () -> Unit,
+    onOpenUsers: () -> Unit,
     onLogout: () -> Unit
 ) {
     val session by viewModel.session.collectAsState()
@@ -164,6 +166,9 @@ fun DashboardScreen(
                 MenuTile("Laporan Penjualan", "Laba rugi dan rekap penjualan", Icons.Default.Assessment, onOpenReports)
             }
             MenuTile("Riwayat Transaksi", "Semua transaksi tersimpan", Icons.Default.List, onOpenTransactions)
+            if (role == "ADMIN") {
+                MenuTile("Manajemen Akun", "Tambah akun kasir & manajer", Icons.Default.Person, onOpenUsers)
+            }
 
             Spacer(modifier = Modifier.height(24.dp))
             Text(

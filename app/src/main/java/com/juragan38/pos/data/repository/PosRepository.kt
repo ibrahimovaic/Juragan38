@@ -19,6 +19,7 @@ class PosRepository @Inject constructor(private val database: AppDatabase) {
 
     val products: Flow<List<Product>> = productDao.all()
     val transactions: Flow<List<Transaction>> = transactionDao.all()
+    val users: Flow<List<User>> = userDao.all()
 
     suspend fun seedIfNeeded() {
         if (userDao.count() == 0) {
@@ -45,6 +46,44 @@ class PosRepository @Inject constructor(private val database: AppDatabase) {
     }
 
     suspend fun login(username: String, password: String): User? = userDao.login(username, password)
+
+    /**
+     * Menyimpan akun baru atau mengubah akun yang sudah ada.
+     * @return pesan error, atau null bila berhasil.
+     */
+    suspend fun saveUser(user: User): String? {
+        val username = user.username.trim()
+        if (user.fullName.isBlank()) return "Nama lengkap wajib diisi"
+        if (username.isBlank()) return "Username wajib diisi"
+        if (username.contains(' ')) return "Username tidak boleh mengandung spasi"
+        if (user.password.isBlank()) return "Password wajib diisi"
+        if (user.password.length < 5) return "Password minimal 5 karakter"
+        if (user.role !in listOf("ADMIN", "KASIR", "MANAJER")) return "Role tidak valid"
+
+        val existing = userDao.byUsername(username)
+        if (existing != null && existing.id != user.id) return "Username \"$username\" sudah dipakai"
+
+        if (user.id != 0L) {
+            val old = userDao.byId(user.id)
+            if (old != null && old.role == "ADMIN" && user.role != "ADMIN" && userDao.adminCount() <= 1) {
+                return "Minimal harus ada 1 akun admin"
+            }
+        }
+
+        userDao.upsert(user.copy(username = username, fullName = user.fullName.trim()))
+        return null
+    }
+
+    /**
+     * @return pesan error, atau null bila berhasil.
+     */
+    suspend fun deleteUser(user: User): String? {
+        if (user.role == "ADMIN" && userDao.adminCount() <= 1) {
+            return "Minimal harus ada 1 akun admin"
+        }
+        userDao.deleteById(user.id)
+        return null
+    }
 
     suspend fun saveProduct(product: Product) {
         productDao.upsert(product)
