@@ -1,0 +1,30 @@
+# Gradle
+.gradle/
+build/
+app/build/
+gradle_out*.txt
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+local.properties
+
+# Kotlin
+.kotlin/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+captures/
+
+# Backups / scratch
+*.bak
+*.bak2
+*.orig
