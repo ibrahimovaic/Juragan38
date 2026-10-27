@@ -3,6 +3,7 @@
 Aplikasi kasir POS berbasis Android dengan fitur lengkap untuk usaha Anda.
 
 ## Fitur Utama
+<<<<<<< HEAD
 - Multi Login (Admin, Kasir, Manajer)
 - Kasir/POS dengan Keranjang
 - Manajemen Produk & Kategori
@@ -13,6 +14,18 @@ Aplikasi kasir POS berbasis Android dengan fitur lengkap untuk usaha Anda.
 - Cetak Struk Bluetooth
 - Dashboard Statistik
 - Riwayat Transaksi
+=======
+- ✅ Multi Login (Admin, Kasir, Manajer)
+- ✅ Kasir/POS dengan Keranjang
+- ✅ Manajemen Produk & Kategori
+- ✅ Stok Otomatis Berkurang
+- ✅ Perhitungan Laba/Rugi (HPP vs Harga Jual)
+- ✅ Laporan Penjualan Real-time
+- ✅ Multi Pembayaran (Tunai, QRIS, Transfer)
+- ✅ Cetak Struk Bluetooth
+- ✅ Dashboard Statistik
+- ✅ Riwayat Transaksi
+>>>>>>> fec4529b65218390386c9c7b8cce6fbbd65d8a59
 
 ## Teknologi
 - Kotlin + Jetpack Compose
