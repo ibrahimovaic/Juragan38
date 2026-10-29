@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.SettingsBrightness
@@ -77,7 +78,9 @@ fun SettingsScreen(viewModel: AppViewModel, onBack: () -> Unit) {
 
     var message by remember { mutableStateOf<String?>(null) }
     var showOutletForm by remember { mutableStateOf(false) }
+    var editingOutlet by remember { mutableStateOf<Outlet?>(null) }
     var confirmDeleteHistory by remember { mutableStateOf(false) }
+    var savingSettings by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -139,7 +142,7 @@ fun SettingsScreen(viewModel: AppViewModel, onBack: () -> Unit) {
                     item {
                         SettingsCard("Outlet / Cabang", Icons.Default.Add) {
                             Text(
-                                "Tambah outlet baru, lalu pilih saat mulai shift.",
+                                "Tambah, ubah, atau hapus outlet. Outlet dipilih saat mulai shift.",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -150,6 +153,10 @@ fun SettingsScreen(viewModel: AppViewModel, onBack: () -> Unit) {
                                 outlets.forEach { outlet ->
                                     OutletRow(
                                         outlet = outlet,
+                                        onEdit = {
+                                            editingOutlet = outlet
+                                            showOutletForm = true
+                                        },
                                         onDelete = {
                                             viewModel.deleteOutlet(outlet) { err ->
                                                 message = err ?: "Outlet ${outlet.name} dihapus"
@@ -160,7 +167,10 @@ fun SettingsScreen(viewModel: AppViewModel, onBack: () -> Unit) {
                             }
                             Spacer(modifier = Modifier.height(6.dp))
                             OutlinedButton(
-                                onClick = { showOutletForm = true },
+                                onClick = {
+                                    editingOutlet = null
+                                    showOutletForm = true
+                                },
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -287,15 +297,22 @@ fun SettingsScreen(viewModel: AppViewModel, onBack: () -> Unit) {
                     item {
                         androidx.compose.material3.Button(
                             onClick = {
+                                if (savingSettings) return@Button
+                                savingSettings = true
                                 viewModel.saveSettings(form) { err ->
+                                    savingSettings = false
                                     message = err ?: "Pengaturan tersimpan"
                                 }
                             },
+                            enabled = !savingSettings,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(48.dp)
                         ) {
-                            Text("Simpan Pengaturan", fontWeight = FontWeight.Bold)
+                            Text(
+                                if (savingSettings) "Menyimpan..." else "Simpan Pengaturan",
+                                fontWeight = FontWeight.Bold
+                            )
                         }
                     }
                 }
@@ -357,12 +374,25 @@ fun SettingsScreen(viewModel: AppViewModel, onBack: () -> Unit) {
     }
 
     if (showOutletForm) {
+        val edited = editingOutlet
         OutletFormDialog(
-            onDismiss = { showOutletForm = false },
+            outlet = edited,
+            onDismiss = {
+                showOutletForm = false
+                editingOutlet = null
+            },
             onSave = { name, address ->
-                viewModel.saveOutlet(Outlet(name = name, address = address)) { err ->
-                    message = err ?: "Outlet $name ditambahkan"
-                    showOutletForm = false
+                // Tutup dialog langsung supaya tidak menggantung saat server lambat/offline.
+                showOutletForm = false
+                editingOutlet = null
+                val target = edited?.copy(name = name, address = address)
+                    ?: Outlet(name = name, address = address)
+                viewModel.saveOutlet(target) { err ->
+                    message = err ?: if (edited == null) {
+                        "Outlet $name ditambahkan"
+                    } else {
+                        "Outlet $name diperbarui"
+                    }
                 }
             }
         )
@@ -487,7 +517,7 @@ private fun ShiftEditor(
 }
 
 @Composable
-private fun OutletRow(outlet: Outlet, onDelete: () -> Unit) {
+private fun OutletRow(outlet: Outlet, onEdit: () -> Unit, onDelete: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -504,6 +534,13 @@ private fun OutletRow(outlet: Outlet, onDelete: () -> Unit) {
                 )
             }
         }
+        IconButton(onClick = onEdit) {
+            Icon(
+                Icons.Default.Edit,
+                contentDescription = "Ubah outlet",
+                tint = MaterialTheme.colorScheme.primary
+            )
+        }
         IconButton(onClick = onDelete) {
             Icon(
                 Icons.Default.Delete,
@@ -516,15 +553,16 @@ private fun OutletRow(outlet: Outlet, onDelete: () -> Unit) {
 
 @Composable
 private fun OutletFormDialog(
+    outlet: Outlet?,
     onDismiss: () -> Unit,
     onSave: (String, String) -> Unit
 ) {
-    var name by remember { mutableStateOf("") }
-    var address by remember { mutableStateOf("") }
+    var name by remember(outlet) { mutableStateOf(outlet?.name.orEmpty()) }
+    var address by remember(outlet) { mutableStateOf(outlet?.address.orEmpty()) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Tambah Outlet") },
+        title = { Text(if (outlet == null) "Tambah Outlet" else "Edit Outlet") },
         text = {
             Column {
                 OutlinedTextField(
@@ -538,8 +576,8 @@ private fun OutletFormDialog(
                 OutlinedTextField(
                     value = address,
                     onValueChange = { address = it },
-                    label = { Text("Alamat (opsional)") },
-                    singleLine = true,
+                    label = { Text("Alamat Outlet (tampil di struk)") },
+                    maxLines = 3,
                     modifier = Modifier.fillMaxWidth()
                 )
             }

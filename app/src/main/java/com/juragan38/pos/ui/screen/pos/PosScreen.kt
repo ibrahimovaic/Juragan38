@@ -85,7 +85,15 @@ fun PosScreen(viewModel: AppViewModel, onBack: () -> Unit) {
     val cart by viewModel.cart.collectAsState()
     val session by viewModel.session.collectAsState()
     val settings by viewModel.settings.collectAsState()
+    val outlets by viewModel.outlets.collectAsState()
     val context = LocalContext.current
+
+    // Alamat outlet yang sedang dipakai shift ini (untuk header struk).
+    val outletAddress = remember(outlets, session?.outletId, session?.outletName) {
+        (outlets.firstOrNull { it.id == session?.outletId }
+            ?: outlets.firstOrNull { it.name == session?.outletName })
+            ?.address.orEmpty()
+    }
 
     val wide = isWideScreen()
     val medium = isMediumScreen()
@@ -116,6 +124,7 @@ fun PosScreen(viewModel: AppViewModel, onBack: () -> Unit) {
                         session?.fullName.orEmpty(),
                         receiptItems,
                         settings.storeName.ifBlank { "JURAGAN 38" },
+                        outletAddress,
                         settings.receiptFooter
                     )
                 )
@@ -282,6 +291,7 @@ fun PosScreen(viewModel: AppViewModel, onBack: () -> Unit) {
             transaction = trx,
             cashier = session?.fullName.orEmpty(),
             items = receiptItems,
+            outletAddress = outletAddress,
             onDismiss = { receipt = null },
             onPrint = {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
@@ -615,6 +625,7 @@ private fun ReceiptDialog(
     transaction: Transaction,
     cashier: String,
     items: List<CartItem>,
+    outletAddress: String,
     onDismiss: () -> Unit,
     onPrint: () -> Unit
 ) {
@@ -628,6 +639,9 @@ private fun ReceiptDialog(
                 Text("Kasir: $cashier", fontSize = 12.sp)
                 if (transaction.outlet.isNotBlank()) {
                     Text("Outlet: ${transaction.outlet}", fontSize = 12.sp)
+                    if (outletAddress.isNotBlank()) {
+                        Text(outletAddress, fontSize = 11.sp)
+                    }
                 }
                 if (transaction.shift.isNotBlank()) {
                     Text("Shift: ${transaction.shift}", fontSize = 12.sp)
@@ -680,12 +694,17 @@ private fun buildReceiptText(
     cashier: String,
     items: List<CartItem>,
     storeName: String,
+    outletAddress: String,
     footer: String
 ): String {
     val sb = StringBuilder()
     val header = transaction.outlet.ifBlank { storeName }
     sb.append(center(header, 30)).append("\n")
-    sb.append(center("Aplikasi Kasir POS", 30)).append("\n")
+    if (outletAddress.isNotBlank()) {
+        outletAddress.lines().forEach { line ->
+            if (line.isNotBlank()) sb.append(center(line.trim(), 30)).append("\n")
+        }
+    }
     sb.append("------------------------------\n")
     sb.append("No   : ${transaction.invoiceNo}\n")
     sb.append("Tgl  : ${transaction.timestamp.toDateTime()}\n")

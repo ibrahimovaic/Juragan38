@@ -30,6 +30,17 @@ Status saat ini (dicek otomatis dari `app/google-services.json`):
 > untuk admin. Kalau sebelumnya sudah pernah publish, **publish ulang** aturan
 > terbaru agar fitur outlet/pengaturan/hapus riwayat bisa dipakai di semua HP.
 
+### Kalau muncul "Akses ditolak / PERMISSION_DENIED"
+
+Pesan ini berarti aturan Firestore di server belum memuat izin terbaru
+(koleksi `settings`, `outlets`, atau hapus `transactions`):
+
+1. Buka https://console.firebase.google.com/project/juragan38/firestore/rules
+2. Pastikan isinya sama persis dengan file **`firestore.rules`** di project ini
+3. Klik **Publish**, lalu tunggu ±1 menit dan coba simpan lagi dari aplikasi
+
+Simpan footer struk dan pengaturan lain butuh akun dengan role **ADMIN**.
+
 ## 3. Buat akun admin pertama (sekali saja)
 
 Akun pertama tidak bisa dibuat dari aplikasi (memang disengaja, supaya tidak ada
@@ -66,8 +77,11 @@ orang luar yang bisa mendaftar sendiri sebagai admin).
   - membuat akun `kasir / kasir123` dan `manajer / manajer123`
 - Setelah itu semua akun baru dibuat dari menu **Manajemen Akun** dan langsung
   bisa dipakai login di HP lain.
-- Menu **Pengaturan** (admin) dipakai untuk menambah outlet, mengatur nama/jam
-  shift, mengubah watermark & nama toko, serta menghapus riwayat penjualan.
+- Menu **Pengaturan** (admin) dipakai untuk menambah, mengubah, dan menghapus
+  outlet, mengatur nama/jam shift, mengubah watermark & nama toko, mengatur
+  footer struk, serta menghapus riwayat penjualan.
+- Header struk otomatis memakai **nama outlet + alamat outlet** yang dipilih saat
+  mulai shift. Footer struk diambil dari **Pengaturan → Struk Print**.
 
 ---
 

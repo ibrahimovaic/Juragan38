@@ -14,9 +14,11 @@ import com.google.firebase.auth.FirebaseAuthUserCollisionException
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.SetOptions
+import com.google.firebase.firestore.Source
 import com.juragan38.pos.data.local.AppDatabase
 import com.juragan38.pos.data.local.AppSettings
 import com.juragan38.pos.data.local.CartItem
@@ -33,6 +35,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.ByteArrayOutputStream
 import java.util.UUID
 import javax.inject.Inject
@@ -74,6 +77,18 @@ class PosRepository @Inject constructor(
     private val transactionCol = firestore.collection("transactions")
     private val outletCol = firestore.collection("outlets")
     private val settingsDoc = firestore.collection("settings").document("app")
+
+    /**
+     * Id transaksi yang sudah dihapus dari sesi ini. Firestore lokal (cache) masih
+     * menyimpan dokumen lama sampai server mengonfirmasi, jadi tanpa daftar ini
+     * riwayat yang baru dihapus bisa muncul lagi seketika.
+     */
+    private val deletedTransactionIds: MutableSet<String> =
+        java.util.Collections.synchronizedSet(mutableSetOf())
+
+    /** Saat true, snapshot pengaturan dari server tidak menimpa editan user. */
+    @Volatile
+    private var settingsWritePending = false
 
     // ---------------------------------------------------------------- auth
 
@@ -166,16 +181,18 @@ class PosRepository @Inject constructor(
                 val docs = snapshot.documents
                 val fromCache = snapshot.metadata.isFromCache
                 val mapped = docs.mapNotNull { it.toTransaction() }
+                    .filterNot { isDeletedLocally(it.id) }
                 scope.launch {
                     if (mapped.isNotEmpty()) transactionDao.upsertAll(mapped)
                     // Transaksi yang sudah dihapus admin di HP lain ikut dibersihkan.
                     if (!fromCache) {
-                        val ids = docs.map { it.id }
-                        if (ids.isEmpty()) {
+                        val serverIds = docs.map { it.id }
+                        val visibleIds = serverIds.filterNot { isDeletedLocally(it) }
+                        if (serverIds.isEmpty()) {
                             transactionDao.clearAllItems()
                             transactionDao.clearAll()
-                        } else {
-                            transactionDao.deleteMissing(ids)
+                        } else if (visibleIds.isNotEmpty()) {
+                            transactionDao.deleteMissing(visibleIds)
                         }
                     }
                 }
@@ -196,7 +213,7 @@ class PosRepository @Inject constructor(
         }
 
         settingsReg = settingsDoc.addSnapshotListener { snapshot, _ ->
-            if (snapshot != null && snapshot.exists()) {
+            if (snapshot != null && snapshot.exists() && !settingsWritePending) {
                 val mapped = snapshot.toSettings()
                 scope.launch { settingsDao.upsert(mapped) }
             }
@@ -308,29 +325,56 @@ class PosRepository @Inject constructor(
 
     // ------------------------------------------------------------- outlets
 
-    suspend fun saveOutlet(outlet: Outlet) {
+    /**
+     * @return pesan error, atau null bila berhasil / sudah masuk antrean offline.
+     */
+    suspend fun saveOutlet(outlet: Outlet): String? {
         val id = outlet.id.ifBlank { UUID.randomUUID().toString() }
         val saved = outlet.copy(id = id)
         outletDao.upsert(saved)
-        runCatching { outletCol.document(id).set(saved.toMap()).await() }
-    }
-
-    suspend fun deleteOutlet(outlet: Outlet): String? {
-        if (outletDao.count() <= 1) return "Minimal harus ada 1 outlet"
-        return runCatching<String?> {
-            outletDao.delete(outlet)
-            outletCol.document(outlet.id).delete()
+        return runCatching {
+            // Jangan menggantung tanpa batas saat offline: data lokal sudah tersimpan,
+            // Firestore akan mengirim ulang saat koneksi kembali.
+            withTimeoutOrNull(WRITE_TIMEOUT_MS) {
+                outletCol.document(id).set(saved.toMap()).await()
+            }
             null
         }.getOrElse { it.friendlyMessage() }
     }
 
+    suspend fun deleteOutlet(outlet: Outlet): String? {
+        if (outletDao.count() <= 1) return "Minimal harus ada 1 outlet"
+        return try {
+            withTimeoutOrNull(WRITE_TIMEOUT_MS) {
+                outletCol.document(outlet.id).delete().await()
+            }
+            outletDao.delete(outlet)
+            null
+        } catch (e: Exception) {
+            e.friendlyMessage()
+        }
+    }
+
     // ------------------------------------------------------------ settings
 
-    suspend fun saveSettings(settings: AppSettings): String? = runCatching<String?> {
+    /**
+     * @return pesan error, atau null bila berhasil / sudah masuk antrean offline.
+     */
+    suspend fun saveSettings(settings: AppSettings): String? {
         settingsDao.upsert(settings)
-        settingsDoc.set(settings.toMap()).await()
-        null
-    }.getOrElse { it.friendlyMessage() }
+        settingsWritePending = true
+        return try {
+            val error = runCatching {
+                withTimeoutOrNull(WRITE_TIMEOUT_MS) {
+                    settingsDoc.set(settings.toMap(), SetOptions.merge()).await()
+                }
+                null
+            }.getOrElse { it.friendlyMessage() }
+            error
+        } finally {
+            settingsWritePending = false
+        }
+    }
 
     // --------------------------------------------------------------- users
 
@@ -543,49 +587,74 @@ class PosRepository @Inject constructor(
     suspend fun itemsOf(transactionId: String): List<TransactionItem> =
         transactionDao.itemsOf(transactionId)
 
-    /** Hapus satu transaksi (lokal + server). Admin saja. */
+    /** Hapus satu transaksi (server dulu, baru lokal). Admin saja. */
     suspend fun deleteTransaction(transaction: Transaction): String? {
-        transactionDao.deleteItemsOf(transaction.id)
-        transactionDao.deleteById(transaction.id)
-        return runCatching<String?> {
+        return try {
             val items = transactionCol.document(transaction.id).collection("items")
-                .limit(200).get().await()
+                .limit(200).get(Source.SERVER).await()
             val batch = firestore.batch()
             items.documents.forEach { batch.delete(it.reference) }
             batch.delete(transactionCol.document(transaction.id))
-            batch.commit()
+            // Cegah cache Firestore menulis ulang transaksi ini ke Room.
+            deletedTransactionIds.add(transaction.id)
+            batch.commit().await()
+            transactionDao.deleteItemsOf(transaction.id)
+            transactionDao.deleteById(transaction.id)
             null
-        }.getOrElse { it.friendlyMessage() }
+        } catch (e: Exception) {
+            // Server gagal: biarkan data tetap ada supaya tidak "muncul lagi" tanpa penjelasan.
+            deletedTransactionIds.remove(transaction.id)
+            e.friendlyMessage()
+        }
     }
 
-    /** Hapus seluruh riwayat penjualan (lokal + server). Admin saja. */
+    /** Hapus seluruh riwayat penjualan (server dulu, baru lokal). Admin saja. */
     suspend fun deleteAllTransactions(): String? {
-        transactionDao.clearAllItems()
-        transactionDao.clearAll()
-        return runCatching<String?> {
-            val docs = transactionCol.limit(500).get().await().documents
-            var batch = firestore.batch()
-            var ops = 0
-            for (doc in docs) {
-                val items = runCatching {
-                    doc.reference.collection("items").limit(200).get().await()
-                }.getOrNull()
-                items?.documents?.forEach {
-                    batch.delete(it.reference)
+        val deletedIds = mutableSetOf<String>()
+        return try {
+            // Server adalah sumber data: hapus di sana dulu sampai habis (>500 dokumen).
+            while (true) {
+                val docs = transactionCol.limit(400).get(Source.SERVER).await().documents
+                if (docs.isEmpty()) break
+
+                var batch = firestore.batch()
+                var ops = 0
+                for (doc in docs) {
+                    val items = doc.reference.collection("items").limit(200)
+                        .get(Source.SERVER).await()
+                    items?.documents?.forEach { item ->
+                        batch.delete(item.reference)
+                        ops++
+                        if (ops >= 400) {
+                            batch.commit().await()
+                            batch = firestore.batch()
+                            ops = 0
+                        }
+                    }
+                    batch.delete(doc.reference)
                     ops++
+                    deletedIds.add(doc.id)
+                    deletedTransactionIds.add(doc.id)
+                    if (ops >= 400) {
+                        batch.commit().await()
+                        batch = firestore.batch()
+                        ops = 0
+                    }
                 }
-                batch.delete(doc.reference)
-                ops++
-                if (ops >= 400) {
-                    batch.commit()
-                    batch = firestore.batch()
-                    ops = 0
-                }
+                if (ops > 0) batch.commit().await()
             }
-            if (ops > 0) batch.commit()
+
+            transactionDao.clearAllItems()
+            transactionDao.clearAll()
             null
-        }.getOrElse { it.friendlyMessage() }
+        } catch (e: Exception) {
+            // Hapus dibatalkan / gagal: jangan sembunyikan transaksi yang masih ada di server.
+            deletedTransactionIds.removeAll(deletedIds)
+            e.friendlyMessage()
+        }
     }
+
+    private fun isDeletedLocally(id: String): Boolean = deletedTransactionIds.contains(id)
 
     // --------------------------------------------------------------- gambar
 
@@ -750,12 +819,23 @@ class PosRepository @Inject constructor(
     }
 
     private fun Throwable.friendlyMessage(): String = when (this) {
-        is FirebaseNetworkException -> "Tidak ada koneksi internet"
+        is FirebaseNetworkException -> "Tidak ada koneksi internet. Coba lagi saat online."
         is FirebaseAuthUserCollisionException -> "Username sudah dipakai"
+        is FirebaseFirestoreException -> when (code) {
+            FirebaseFirestoreException.Code.PERMISSION_DENIED ->
+                "Akses ditolak server. Pastikan firestore.rules terbaru sudah di-publish " +
+                    "di Firebase Console (Firestore Database > Rules > Publish)."
+            FirebaseFirestoreException.Code.UNAVAILABLE ->
+                "Tidak ada koneksi internet. Coba lagi saat online."
+            FirebaseFirestoreException.Code.UNAUTHENTICATED ->
+                "Sesi login berakhir. Silakan login ulang."
+            else -> message ?: "Gagal mengakses server, coba lagi"
+        }
         else -> message ?: "Terjadi kesalahan, coba lagi"
     }
 
     private companion object {
         const val HELPER_APP = "juragan38-helper"
+        const val WRITE_TIMEOUT_MS = 12_000L
     }
 }

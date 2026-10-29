@@ -226,10 +226,7 @@ class AppViewModel @Inject constructor(
 
     fun saveOutlet(outlet: Outlet, onResult: (String?) -> Unit) {
         viewModelScope.launch {
-            val error = runCatching { repository.saveOutlet(outlet) }
-                .exceptionOrNull()
-                ?.message
-            onResult(error)
+            onResult(repository.saveOutlet(outlet))
         }
     }
 
