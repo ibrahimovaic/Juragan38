@@ -1,5 +1,6 @@
 package com.juragan38.pos.ui
 
+import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -14,18 +15,40 @@ import com.juragan38.pos.data.local.Transaction
 import com.juragan38.pos.data.local.TransactionItem
 import com.juragan38.pos.data.local.User
 import com.juragan38.pos.data.repository.PosRepository
+import com.juragan38.pos.utils.UpdateCheckResult
+import com.juragan38.pos.utils.UpdateChecker
+import com.juragan38.pos.utils.UpdateInfo
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.io.File
 import javax.inject.Inject
+
+/** Status pengecekan / unduh / pasang pembaruan APK. */
+data class UpdateState(
+    val checking: Boolean = false,
+    val available: UpdateInfo? = null,
+    /** 0..100 saat mengunduh, null kalau tidak sedang mengunduh. */
+    val progress: Int? = null,
+    val downloaded: Boolean = false,
+    val error: String? = null,
+    val message: String? = null,
+    val lastCheckedAt: Long = 0L
+)
+
+private const val AUTO_CHECK_INTERVAL = 6 * 60 * 60 * 1000L
+private const val KEY_LAST_CHECK = "last_update_check"
 
 @HiltViewModel
 class AppViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val repository: PosRepository,
     private val sessionManager: SessionManager
 ) : ViewModel() {
@@ -60,6 +83,14 @@ class AppViewModel @Inject constructor(
     private val _themeMode = MutableStateFlow(ThemeMode.SYSTEM)
     val themeMode: StateFlow<String> = _themeMode.asStateFlow()
 
+    private val _updateState = MutableStateFlow(UpdateState())
+    val updateState: StateFlow<UpdateState> = _updateState.asStateFlow()
+
+    private val localPrefs by lazy {
+        context.getSharedPreferences("juragan38_local", Context.MODE_PRIVATE)
+    }
+    private var downloadedApk: File? = null
+
     init {
         viewModelScope.launch {
             if (!repository.hasSession()) {
@@ -77,6 +108,8 @@ class AppViewModel @Inject constructor(
                     if (s == null) ThemeMode.SYSTEM else sessionManager.themeOf(s.username)
             }
         }
+        // Cek pembaruan otomatis (maksimal sekali per 6 jam).
+        checkForUpdate(manual = false)
     }
 
     // --------------------------------------------------------------- auth
@@ -243,6 +276,145 @@ class AppViewModel @Inject constructor(
         viewModelScope.launch {
             onResult(repository.saveSettings(settings))
         }
+    }
+
+    // ----------------------------------------------------------- pembaruan
+
+    /**
+     * Cek versi terbaru. Otomatis dipanggil saat aplikasi dibuka (maks. tiap
+     * 6 jam); [manual] = true saat pengguna menekan tombol "Cek Pembaruan"
+     * sehingga pesan "sudah versi terbaru"/error ikut ditampilkan.
+     */
+    fun checkForUpdate(manual: Boolean = false) {
+        val state = _updateState.value
+        if (state.checking || state.progress != null) return
+
+        val now = System.currentTimeMillis()
+        val lastCheck = localPrefs.getLong(KEY_LAST_CHECK, 0L)
+        if (!manual && now - lastCheck < AUTO_CHECK_INTERVAL) {
+            _updateState.update { it.copy(lastCheckedAt = lastCheck) }
+            return
+        }
+
+        viewModelScope.launch {
+            _updateState.update {
+                it.copy(checking = true, error = null, message = null)
+            }
+            val currentCode = UpdateChecker.installedVersion(context).versionCode
+            val result = UpdateChecker.check(currentCode)
+            val checkedAt = System.currentTimeMillis()
+            localPrefs.edit().putLong(KEY_LAST_CHECK, checkedAt).apply()
+
+            when (result) {
+                is UpdateCheckResult.Available -> {
+                    downloadedApk = null
+                    _updateState.update {
+                        it.copy(
+                            checking = false,
+                            available = result.info,
+                            downloaded = false,
+                            progress = null,
+                            message = null,
+                            error = null,
+                            lastCheckedAt = checkedAt
+                        )
+                    }
+                }
+
+                UpdateCheckResult.UpToDate -> _updateState.update {
+                    it.copy(
+                        checking = false,
+                        available = null,
+                        downloaded = false,
+                        lastCheckedAt = checkedAt,
+                        message = if (manual) "Aplikasi sudah versi terbaru." else null
+                    )
+                }
+
+                is UpdateCheckResult.Failed -> _updateState.update {
+                    it.copy(
+                        checking = false,
+                        lastCheckedAt = checkedAt,
+                        error = if (manual) result.message else null
+                    )
+                }
+            }
+        }
+    }
+
+    /** Unduh APK pembaruan, lalu buka layar instalasi Android. */
+    fun downloadUpdate() {
+        val info = _updateState.value.available ?: return
+        if (_updateState.value.progress != null) return
+
+        viewModelScope.launch {
+            _updateState.update {
+                it.copy(progress = 0, error = null, message = null)
+            }
+            val result = runCatching {
+                UpdateChecker.download(context, info) { percent ->
+                    _updateState.update { it.copy(progress = percent) }
+                }
+            }
+            val file = result.getOrNull()
+            if (file == null) {
+                _updateState.update {
+                    it.copy(
+                        progress = null,
+                        error = result.exceptionOrNull()?.message
+                            ?: "Gagal mengunduh pembaruan. Coba lagi."
+                    )
+                }
+                return@launch
+            }
+
+            downloadedApk = file
+            _updateState.update { it.copy(progress = null, downloaded = true) }
+            if (UpdateChecker.canInstall(context)) {
+                UpdateChecker.install(context, file)
+            } else {
+                UpdateChecker.openInstallPermission(context)
+                _updateState.update {
+                    it.copy(
+                        message = "Izinkan \"Instal aplikasi tidak dikenal\" untuk JURAGAN 38, " +
+                            "lalu tekan Pasang."
+                    )
+                }
+            }
+        }
+    }
+
+    /** Pasang APK yang sudah selesai diunduh. */
+    fun installDownloadedUpdate() {
+        val file = downloadedApk
+        if (file == null || !file.exists()) {
+            _updateState.update {
+                it.copy(downloaded = false, message = "File pembaruan tidak ditemukan, unduh ulang.")
+            }
+            return
+        }
+        if (UpdateChecker.canInstall(context)) {
+            UpdateChecker.install(context, file)
+        } else {
+            UpdateChecker.openInstallPermission(context)
+            _updateState.update {
+                it.copy(message = "Izinkan pemasangan aplikasi lalu tekan Pasang lagi.")
+            }
+        }
+    }
+
+    fun openInstallPermission() {
+        UpdateChecker.openInstallPermission(context)
+    }
+
+    /** Tutup dialog pembaruan (unduhan yang sedang berjalan tidak dibatalkan). */
+    fun dismissUpdate() {
+        if (_updateState.value.progress != null) return
+        _updateState.update { it.copy(available = null) }
+    }
+
+    fun clearUpdateMessage() {
+        _updateState.update { it.copy(message = null, error = null) }
     }
 
     // --------------------------------------------------------------- users

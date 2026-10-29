@@ -28,3 +28,7 @@ captures/
 *.bak
 *.bak2
 *.orig
+
+# APK rilis untuk auto-update (dibaca aplikasi dari update.json)
+!apk/JURAGAN-38.apk
+

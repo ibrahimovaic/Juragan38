@@ -36,6 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -46,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.juragan38.pos.R
 import com.juragan38.pos.ui.AppViewModel
+import com.juragan38.pos.utils.UpdateChecker
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -57,6 +59,8 @@ fun LoginScreen(viewModel: AppViewModel, onLoggedIn: () -> Unit) {
     var loading by remember { mutableStateOf(false) }
     val error by viewModel.loginError.collectAsState()
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val appVersion = remember { UpdateChecker.installedVersion(context).versionName }
 
     Column(
         modifier = Modifier
@@ -187,7 +191,7 @@ fun LoginScreen(viewModel: AppViewModel, onLoggedIn: () -> Unit) {
             }
 
             Text(
-                text = "v1.2.0",
+                text = "v$appVersion",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
