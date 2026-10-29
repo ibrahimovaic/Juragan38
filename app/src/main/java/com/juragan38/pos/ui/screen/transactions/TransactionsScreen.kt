@@ -1,6 +1,12 @@
 package com.juragan38.pos.ui.screen.transactions
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -16,6 +22,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Print
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -39,9 +46,15 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.juragan38.pos.data.local.Transaction
+import com.juragan38.pos.data.local.TransactionItem
 import com.juragan38.pos.ui.AppViewModel
 import com.juragan38.pos.ui.components.CenteredContent
+import com.juragan38.pos.ui.components.TransactionDetailDialog
+import com.juragan38.pos.utils.BluetoothPrinter
+import com.juragan38.pos.utils.ReceiptItem
+import com.juragan38.pos.utils.buildReceiptText
 import com.juragan38.pos.utils.toDateTime
 import com.juragan38.pos.utils.toRupiah
 
@@ -50,11 +63,89 @@ import com.juragan38.pos.utils.toRupiah
 fun TransactionsScreen(viewModel: AppViewModel, onBack: () -> Unit) {
     val transactions by viewModel.transactions.collectAsState()
     val session by viewModel.session.collectAsState()
+    val settings by viewModel.settings.collectAsState()
+    val outlets by viewModel.outlets.collectAsState()
     val context = LocalContext.current
 
     val isAdmin = session?.role == "ADMIN"
     var deleting by remember { mutableStateOf<Transaction?>(null) }
     var confirmDeleteAll by remember { mutableStateOf(false) }
+
+    var detail by remember { mutableStateOf<Transaction?>(null) }
+    var detailItems by remember { mutableStateOf<List<TransactionItem>>(emptyList()) }
+    var detailLoading by remember { mutableStateOf(false) }
+
+    val openDetail: (Transaction) -> Unit = { trx ->
+        detail = trx
+        detailItems = emptyList()
+        detailLoading = true
+        viewModel.loadItems(trx.id) { items ->
+            detailItems = items
+            detailLoading = false
+        }
+    }
+
+    val doReprint: () -> Unit = {
+        val trx = detail
+        if (trx == null) {
+            Toast.makeText(context, "Pilih transaksi dulu", Toast.LENGTH_SHORT).show()
+        } else if (detailItems.isEmpty()) {
+            Toast.makeText(
+                context,
+                "Rincian item belum tersedia. Sambungkan internet lalu buka lagi.",
+                Toast.LENGTH_SHORT
+            ).show()
+        } else {
+            val printers = BluetoothPrinter.pairedPrinters()
+            if (printers.isEmpty()) {
+                Toast.makeText(
+                    context,
+                    "Tidak ada printer Bluetooth terpasang",
+                    Toast.LENGTH_SHORT
+                ).show()
+            } else {
+                val ok = BluetoothPrinter.print(
+                    printers.first(),
+                    buildReceiptText(
+                        transaction = trx,
+                        cashier = trx.cashier,
+                        items = detailItems.map {
+                            ReceiptItem(it.productName, it.price, it.qty, it.subtotal)
+                        },
+                        storeName = settings.storeName.ifBlank { "JURAGAN 38" },
+                        outletAddress = outlets.firstOrNull { it.name == trx.outlet }
+                            ?.address.orEmpty(),
+                        footer = settings.receiptFooter
+                    )
+                )
+                Toast.makeText(
+                    context,
+                    if (ok) "Struk terkirim ke ${printers.first().name}" else "Gagal mencetak struk",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+
+    val bluetoothPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) doReprint()
+        else Toast.makeText(context, "Izin Bluetooth ditolak", Toast.LENGTH_SHORT).show()
+    }
+
+    val requestReprint: () -> Unit = {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.BLUETOOTH_CONNECT
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            bluetoothPermission.launch(Manifest.permission.BLUETOOTH_CONNECT)
+        } else {
+            doReprint()
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -113,7 +204,11 @@ fun TransactionsScreen(viewModel: AppViewModel, onBack: () -> Unit) {
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(transactions, key = { it.id }) { trx ->
-                        Card(modifier = Modifier.fillMaxWidth()) {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { openDetail(trx) }
+                        ) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -166,6 +261,14 @@ fun TransactionsScreen(viewModel: AppViewModel, onBack: () -> Unit) {
                                         )
                                     }
                                 }
+                                IconButton(onClick = { openDetail(trx) }) {
+                                    Icon(
+                                        Icons.Default.Print,
+                                        contentDescription = "Cetak ulang struk",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -173,6 +276,17 @@ fun TransactionsScreen(viewModel: AppViewModel, onBack: () -> Unit) {
                 }
             }
         }
+    }
+
+    detail?.let { trx ->
+        TransactionDetailDialog(
+            transaction = trx,
+            items = detailItems,
+            loading = detailLoading,
+            outletAddress = outlets.firstOrNull { it.name == trx.outlet }?.address.orEmpty(),
+            onDismiss = { detail = null },
+            onPrint = requestReprint
+        )
     }
 
     deleting?.let { trx ->

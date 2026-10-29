@@ -604,8 +604,33 @@ class PosRepository @Inject constructor(
         return transaction
     }
 
-    suspend fun itemsOf(transactionId: String): List<TransactionItem> =
-        transactionDao.itemsOf(transactionId)
+    /**
+     * Item transaksi. Diambil dari cache Room; kalau belum ada (transaksi dari HP
+     * lain / cache baru dibersihkan) ambil dari Firestore lalu simpan ke cache.
+     */
+    suspend fun itemsOf(transactionId: String): List<TransactionItem> {
+        val local = transactionDao.itemsOf(transactionId)
+        if (local.isNotEmpty()) return local
+
+        return runCatching {
+            val docs = transactionCol.document(transactionId).collection("items")
+                .get(Source.SERVER).await().documents
+            val mapped = docs.mapNotNull { doc ->
+                val name = doc.getString("productName") ?: return@mapNotNull null
+                TransactionItem(
+                    transactionId = transactionId,
+                    productId = doc.getString("productId").orEmpty(),
+                    productName = name,
+                    price = doc.getDouble("price") ?: 0.0,
+                    cost = doc.getDouble("cost") ?: 0.0,
+                    qty = (doc.getLong("qty") ?: 0L).toInt(),
+                    subtotal = doc.getDouble("subtotal") ?: 0.0
+                )
+            }
+            if (mapped.isNotEmpty()) transactionDao.insertItems(mapped)
+            mapped
+        }.getOrDefault(emptyList())
+    }
 
     /** Hapus satu transaksi (server dulu, baru lokal). Admin saja. */
     suspend fun deleteTransaction(transaction: Transaction): String? {
@@ -751,6 +776,7 @@ class PosRepository @Inject constructor(
         "watermarkText" to watermarkText,
         "watermarkOpacity" to watermarkOpacity.toDouble(),
         "receiptFooter" to receiptFooter,
+        "shiftsJson" to shiftsJson,
         "updatedAt" to FieldValue.serverTimestamp()
     )
 
@@ -797,7 +823,8 @@ class PosRepository @Inject constructor(
             watermarkEnabled = getBoolean("watermarkEnabled") ?: default.watermarkEnabled,
             watermarkText = getString("watermarkText") ?: default.watermarkText,
             watermarkOpacity = (getDouble("watermarkOpacity") ?: default.watermarkOpacity.toDouble()).toFloat(),
-            receiptFooter = getString("receiptFooter") ?: default.receiptFooter
+            receiptFooter = getString("receiptFooter") ?: default.receiptFooter,
+            shiftsJson = getString("shiftsJson").orEmpty()
         )
     }
 

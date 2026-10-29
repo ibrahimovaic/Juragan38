@@ -11,6 +11,7 @@ import com.juragan38.pos.data.local.CartItem
 import com.juragan38.pos.data.local.Outlet
 import com.juragan38.pos.data.local.Product
 import com.juragan38.pos.data.local.Transaction
+import com.juragan38.pos.data.local.TransactionItem
 import com.juragan38.pos.data.local.User
 import com.juragan38.pos.data.repository.PosRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -263,6 +264,15 @@ class AppViewModel @Inject constructor(
     }
 
     // ---------------------------------------------------------- transaksi
+
+    /** Muat rincian item transaksi (dari cache, atau server bila belum ada). */
+    fun loadItems(transactionId: String, onLoaded: (List<TransactionItem>) -> Unit) {
+        viewModelScope.launch {
+            val items = runCatching { repository.itemsOf(transactionId) }
+                .getOrDefault(emptyList())
+            onLoaded(items)
+        }
+    }
 
     fun deleteTransaction(transaction: Transaction, onResult: (String?) -> Unit) {
         viewModelScope.launch {

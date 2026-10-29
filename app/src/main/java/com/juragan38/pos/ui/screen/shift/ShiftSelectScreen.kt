@@ -61,6 +61,7 @@ fun ShiftSelectScreen(
 
     val fallbackOutlet = remember { Outlet(id = "utama", name = "Outlet Utama") }
     val outletList = remember(outlets) { outlets.ifEmpty { listOf(fallbackOutlet) } }
+    val shifts = remember(settings) { settings.shifts() }
 
     var outlet by remember(outlets) {
         mutableStateOf(
@@ -69,7 +70,9 @@ fun ShiftSelectScreen(
     }
     var shiftKey by remember(settings) {
         mutableStateOf(
-            session?.shiftKey?.takeIf { it.isNotBlank() } ?: currentShiftKey(settings)
+            session?.shiftKey
+                ?.takeIf { key -> shifts.any { it.id == key } }
+                ?: currentShiftKey(settings)
         )
     }
 
@@ -112,12 +115,9 @@ fun ShiftSelectScreen(
                     DropdownField(
                         icon = Icons.Default.DateRange,
                         value = settings.shiftLabel(shiftKey),
-                        options = listOf(
-                            settings.shiftLabel(AppSettings.SHIFT_1),
-                            settings.shiftLabel(AppSettings.SHIFT_2)
-                        ),
+                        options = shifts.map { it.label() },
                         onSelect = { index ->
-                            shiftKey = if (index == 0) AppSettings.SHIFT_1 else AppSettings.SHIFT_2
+                            shifts.getOrNull(index)?.let { shiftKey = it.id }
                         }
                     )
 
@@ -234,18 +234,15 @@ private fun nowText(): String {
 
 /** Tebak shift yang sedang berjalan berdasarkan jam sekarang. */
 private fun currentShiftKey(settings: AppSettings): String {
+    val shifts = settings.shifts()
     val cal = Calendar.getInstance()
     val now = cal.get(Calendar.HOUR_OF_DAY) * 60 + cal.get(Calendar.MINUTE)
-    val start1 = toMinutes(settings.shift1Start) ?: 0
-    val end1 = endMinutes(settings.shift1End)
-    val start2 = toMinutes(settings.shift2Start) ?: 0
-    val end2 = endMinutes(settings.shift2End)
-
-    return when {
-        now in start1 until end1 -> AppSettings.SHIFT_1
-        now in start2 until end2 -> AppSettings.SHIFT_2
-        else -> AppSettings.SHIFT_1
+    val match = shifts.firstOrNull { shift ->
+        val start = toMinutes(shift.start) ?: return@firstOrNull false
+        val end = endMinutes(shift.end)
+        now in start until end
     }
+    return match?.id ?: shifts.firstOrNull()?.id.orEmpty()
 }
 
 private fun toMinutes(text: String): Int? {

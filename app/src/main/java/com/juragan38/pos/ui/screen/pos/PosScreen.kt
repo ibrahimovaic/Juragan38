@@ -75,6 +75,8 @@ import com.juragan38.pos.ui.components.ProductImage
 import com.juragan38.pos.ui.components.isMediumScreen
 import com.juragan38.pos.ui.components.isWideScreen
 import com.juragan38.pos.utils.BluetoothPrinter
+import com.juragan38.pos.utils.ReceiptItem
+import com.juragan38.pos.utils.buildReceiptText
 import com.juragan38.pos.utils.toDateTime
 import com.juragan38.pos.utils.toRupiah
 
@@ -122,7 +124,9 @@ fun PosScreen(viewModel: AppViewModel, onBack: () -> Unit) {
                     buildReceiptText(
                         trx,
                         session?.fullName.orEmpty(),
-                        receiptItems,
+                        receiptItems.map {
+                            ReceiptItem(it.name, it.price, it.qty, it.subtotal)
+                        },
                         settings.storeName.ifBlank { "JURAGAN 38" },
                         outletAddress,
                         settings.receiptFooter
@@ -688,48 +692,3 @@ private fun ReceiptDialog(
         }
     )
 }
-
-private fun buildReceiptText(
-    transaction: Transaction,
-    cashier: String,
-    items: List<CartItem>,
-    storeName: String,
-    outletAddress: String,
-    footer: String
-): String {
-    val sb = StringBuilder()
-    val header = transaction.outlet.ifBlank { storeName }
-    sb.append(center(header, 30)).append("\n")
-    if (outletAddress.isNotBlank()) {
-        outletAddress.lines().forEach { line ->
-            if (line.isNotBlank()) sb.append(center(line.trim(), 30)).append("\n")
-        }
-    }
-    sb.append("------------------------------\n")
-    sb.append("No   : ${transaction.invoiceNo}\n")
-    sb.append("Tgl  : ${transaction.timestamp.toDateTime()}\n")
-    sb.append("Kasir: $cashier\n")
-    if (transaction.shift.isNotBlank()) {
-        sb.append("Shift : ${transaction.shift}\n")
-    }
-    sb.append("------------------------------\n")
-    items.forEach { item ->
-        sb.append("${item.name}\n")
-        sb.append("  ${item.qty} x ${item.price.toRupiah()} = ${item.subtotal.toRupiah()}\n")
-    }
-    sb.append("------------------------------\n")
-    sb.append("TOTAL   : ${transaction.total.toRupiah()}\n")
-    sb.append("BAYAR   : ${transaction.paidAmount.toRupiah()}\n")
-    sb.append("KEMBALI : ${transaction.changeAmount.toRupiah()}\n")
-    sb.append("METODE  : ${transaction.paymentMethod}\n")
-    sb.append("------------------------------\n")
-    val footerText = footer.ifBlank { "Terima kasih sudah berbelanja" }
-    footerText.lines().forEach { line ->
-        sb.append(center(line, 30)).append("\n")
-    }
-    sb.append("\n\n")
-    return sb.toString()
-}
-
-private fun center(text: String, width: Int): String =
-    if (text.length >= width) text else " ".repeat((width - text.length) / 2) + text

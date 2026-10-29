@@ -58,6 +58,7 @@ import androidx.compose.ui.unit.sp
 import com.juragan38.pos.data.ThemeMode
 import com.juragan38.pos.data.local.AppSettings
 import com.juragan38.pos.data.local.Outlet
+import com.juragan38.pos.data.local.Shift
 import com.juragan38.pos.ui.AppViewModel
 import com.juragan38.pos.ui.components.CenteredContent
 
@@ -186,31 +187,68 @@ fun SettingsScreen(viewModel: AppViewModel, onBack: () -> Unit) {
                     item {
                         SettingsCard("Shift & Jam Kerja", Icons.Default.SettingsBrightness) {
                             Text(
-                                "Atur nama dan jam kerja tiap shift. Perubahan berlaku untuk semua HP.",
+                                "Tambah atau hapus shift sesuai kebutuhan (minimal 1). " +
+                                    "Perubahan berlaku untuk semua HP.",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Spacer(modifier = Modifier.height(10.dp))
 
-                            ShiftEditor(
-                                title = "Shift 1",
-                                name = form.shift1Name,
-                                start = form.shift1Start,
-                                end = form.shift1End,
-                                onName = { form = form.copy(shift1Name = it) },
-                                onStart = { form = form.copy(shift1Start = it) },
-                                onEnd = { form = form.copy(shift1End = it) }
-                            )
-                            Spacer(modifier = Modifier.height(12.dp))
-                            ShiftEditor(
-                                title = "Shift 2",
-                                name = form.shift2Name,
-                                start = form.shift2Start,
-                                end = form.shift2End,
-                                onName = { form = form.copy(shift2Name = it) },
-                                onStart = { form = form.copy(shift2Start = it) },
-                                onEnd = { form = form.copy(shift2End = it) }
-                            )
+                            val shiftList = form.shifts()
+                            shiftList.forEachIndexed { index, shift ->
+                                ShiftEditor(
+                                    title = "Shift ${index + 1}",
+                                    name = shift.name,
+                                    start = shift.start,
+                                    end = shift.end,
+                                    canDelete = shiftList.size > 1,
+                                    onName = {
+                                        form = form.withShifts(
+                                            shiftList.replaced(index, shift.copy(name = it))
+                                        )
+                                    },
+                                    onStart = {
+                                        form = form.withShifts(
+                                            shiftList.replaced(index, shift.copy(start = it))
+                                        )
+                                    },
+                                    onEnd = {
+                                        form = form.withShifts(
+                                            shiftList.replaced(index, shift.copy(end = it))
+                                        )
+                                    },
+                                    onDelete = {
+                                        form = form.withShifts(
+                                            shiftList.filterIndexed { i, _ -> i != index }
+                                        )
+                                    }
+                                )
+                                if (index != shiftList.lastIndex) {
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    val newShift = Shift(
+                                        id = nextShiftId(shiftList),
+                                        name = "Shift ${shiftList.size + 1}",
+                                        start = "08:00",
+                                        end = "16:00"
+                                    )
+                                    form = form.withShifts(shiftList + newShift)
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(
+                                    Icons.Default.Add,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Tambah Shift")
+                            }
 
                             Spacer(modifier = Modifier.height(12.dp))
                             OutlinedTextField(
@@ -479,11 +517,30 @@ private fun ShiftEditor(
     name: String,
     start: String,
     end: String,
+    canDelete: Boolean,
     onName: (String) -> Unit,
     onStart: (String) -> Unit,
-    onEnd: (String) -> Unit
+    onEnd: (String) -> Unit,
+    onDelete: () -> Unit
 ) {
-    Text(title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            title,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.weight(1f)
+        )
+        if (canDelete) {
+            IconButton(onClick = onDelete) {
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = "Hapus shift",
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+    }
     Spacer(modifier = Modifier.height(6.dp))
     OutlinedTextField(
         value = name,
@@ -594,4 +651,19 @@ private fun OutletFormDialog(
             TextButton(onClick = onDismiss) { Text("Batal") }
         }
     )
+}
+
+private fun List<Shift>.replaced(index: Int, value: Shift): List<Shift> =
+    mapIndexed { i, shift -> if (i == index) value else shift }
+
+/** Buat id baru yang belum dipakai, mis. SHIFT3, SHIFT4, ... */
+private fun nextShiftId(shifts: List<Shift>): String {
+    val used = shifts.map { it.id }.toSet()
+    var number = shifts.mapNotNull { it.id.removePrefix("SHIFT").toIntOrNull() }
+        .maxOrNull() ?: 0
+    while (true) {
+        number++
+        val candidate = "SHIFT$number"
+        if (candidate !in used) return candidate
+    }
 }
