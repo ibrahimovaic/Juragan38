@@ -115,7 +115,8 @@ fun PosScreen(viewModel: AppViewModel, onBack: () -> Unit) {
                         trx,
                         session?.fullName.orEmpty(),
                         receiptItems,
-                        settings.storeName.ifBlank { "JURAGAN 38" }
+                        settings.storeName.ifBlank { "JURAGAN 38" },
+                        settings.receiptFooter
                     )
                 )
                 Toast.makeText(
@@ -678,18 +679,17 @@ private fun buildReceiptText(
     transaction: Transaction,
     cashier: String,
     items: List<CartItem>,
-    storeName: String
+    storeName: String,
+    footer: String
 ): String {
     val sb = StringBuilder()
-    sb.append(center(storeName, 30)).append("\n")
-    sb.append("   Aplikasi Kasir POS\n")
+    val header = transaction.outlet.ifBlank { storeName }
+    sb.append(center(header, 30)).append("\n")
+    sb.append(center("Aplikasi Kasir POS", 30)).append("\n")
     sb.append("------------------------------\n")
     sb.append("No   : ${transaction.invoiceNo}\n")
     sb.append("Tgl  : ${transaction.timestamp.toDateTime()}\n")
     sb.append("Kasir: $cashier\n")
-    if (transaction.outlet.isNotBlank()) {
-        sb.append("Outlet: ${transaction.outlet}\n")
-    }
     if (transaction.shift.isNotBlank()) {
         sb.append("Shift : ${transaction.shift}\n")
     }
@@ -704,7 +704,11 @@ private fun buildReceiptText(
     sb.append("KEMBALI : ${transaction.changeAmount.toRupiah()}\n")
     sb.append("METODE  : ${transaction.paymentMethod}\n")
     sb.append("------------------------------\n")
-    sb.append("   Terima kasih sudah belanja\n\n\n")
+    val footerText = footer.ifBlank { "Terima kasih sudah berbelanja" }
+    footerText.lines().forEach { line ->
+        sb.append(center(line, 30)).append("\n")
+    }
+    sb.append("\n\n")
     return sb.toString()
 }
 

@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.SettingsBrightness
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -253,6 +254,29 @@ fun SettingsScreen(viewModel: AppViewModel, onBack: () -> Unit) {
                                 onValueChange = { form = form.copy(watermarkOpacity = it) },
                                 valueRange = 0.02f..0.20f,
                                 enabled = form.watermarkEnabled
+                            )
+                        }
+                    }
+                }
+
+                // ---------------------------------------------- struk print
+                if (isAdmin) {
+                    item {
+                        SettingsCard("Struk Print", Icons.Default.Print) {
+                            Text(
+                                "Header struk otomatis memakai nama outlet tempat transaksi. " +
+                                    "Footer bisa diubah sesuka hati (boleh beberapa baris).",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            OutlinedTextField(
+                                value = form.receiptFooter,
+                                onValueChange = { form = form.copy(receiptFooter = it) },
+                                label = { Text("Footer Struk") },
+                                minLines = 2,
+                                maxLines = 5,
+                                modifier = Modifier.fillMaxWidth()
                             )
                         }
                     }

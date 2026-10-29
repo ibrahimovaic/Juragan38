@@ -87,7 +87,8 @@ outlets/{outletId}
 settings/app
   storeName, shift1Name, shift1Start, shift1End,
   shift2Name, shift2Start, shift2End,
-  watermarkEnabled, watermarkText, watermarkOpacity, updatedAt
+  watermarkEnabled, watermarkText, watermarkOpacity,
+  receiptFooter, updatedAt
 
 products/{productId}
   name, category, price, cost, stock, image, updatedAt

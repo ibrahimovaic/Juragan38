@@ -661,6 +661,7 @@ class PosRepository @Inject constructor(
         "watermarkEnabled" to watermarkEnabled,
         "watermarkText" to watermarkText,
         "watermarkOpacity" to watermarkOpacity.toDouble(),
+        "receiptFooter" to receiptFooter,
         "updatedAt" to FieldValue.serverTimestamp()
     )
 
@@ -706,7 +707,8 @@ class PosRepository @Inject constructor(
             shift2End = getString("shift2End") ?: default.shift2End,
             watermarkEnabled = getBoolean("watermarkEnabled") ?: default.watermarkEnabled,
             watermarkText = getString("watermarkText") ?: default.watermarkText,
-            watermarkOpacity = (getDouble("watermarkOpacity") ?: default.watermarkOpacity.toDouble()).toFloat()
+            watermarkOpacity = (getDouble("watermarkOpacity") ?: default.watermarkOpacity.toDouble()).toFloat(),
+            receiptFooter = getString("receiptFooter") ?: default.receiptFooter
         )
     }
 

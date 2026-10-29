@@ -160,7 +160,7 @@ fun LoginScreen(viewModel: AppViewModel, onLoggedIn: () -> Unit) {
             }
 
             Text(
-                text = "v1.1.0",
+                text = "v1.1.1",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,

@@ -86,7 +86,9 @@ data class AppSettings(
     val shift2End: String = "23:59",
     val watermarkEnabled: Boolean = true,
     val watermarkText: String = "JURAGAN 38",
-    val watermarkOpacity: Float = 0.06f
+    val watermarkOpacity: Float = 0.06f,
+    /** Baris penutup struk. Header struk otomatis memakai nama outlet. */
+    val receiptFooter: String = "Terima kasih sudah berbelanja"
 ) {
     /** Label panjang untuk ditampilkan, mis. "Shift 1 (08:00-16:00)". */
     fun shiftLabel(key: String): String = when (key) {
