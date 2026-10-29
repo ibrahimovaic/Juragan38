@@ -87,8 +87,15 @@ class PosRepository @Inject constructor(
         java.util.Collections.synchronizedSet(mutableSetOf())
 
     /** Saat true, snapshot pengaturan dari server tidak menimpa editan user. */
-    @Volatile
-    private var settingsWritePending = false
+    private val localPrefs by lazy {
+        context.getSharedPreferences("juragan38_local", Context.MODE_PRIVATE)
+    }
+
+    private var settingsWritePending: Boolean
+        get() = localPrefs.getBoolean(KEY_SETTINGS_PENDING, false)
+        set(value) {
+            localPrefs.edit().putBoolean(KEY_SETTINGS_PENDING, value).apply()
+        }
 
     // ---------------------------------------------------------------- auth
 
@@ -213,9 +220,21 @@ class PosRepository @Inject constructor(
         }
 
         settingsReg = settingsDoc.addSnapshotListener { snapshot, _ ->
-            if (snapshot != null && snapshot.exists() && !settingsWritePending) {
+            if (snapshot != null && snapshot.exists()) {
                 val mapped = snapshot.toSettings()
-                scope.launch { settingsDao.upsert(mapped) }
+                scope.launch {
+                    if (settingsWritePending) {
+                        // Jangan timpa editan lokal dengan snapshot lama; tunggu server
+                        // benar-benar berisi nilai yang baru disimpan.
+                        val local = settingsDao.current()
+                        if (local == null || mapped == local) {
+                            settingsWritePending = false
+                            settingsDao.upsert(mapped)
+                        }
+                    } else {
+                        settingsDao.upsert(mapped)
+                    }
+                }
             }
         }
 
@@ -364,15 +383,16 @@ class PosRepository @Inject constructor(
         settingsDao.upsert(settings)
         settingsWritePending = true
         return try {
-            val error = runCatching {
-                withTimeoutOrNull(WRITE_TIMEOUT_MS) {
-                    settingsDoc.set(settings.toMap(), SetOptions.merge()).await()
-                }
-                null
-            }.getOrElse { it.friendlyMessage() }
-            error
-        } finally {
-            settingsWritePending = false
+            withTimeoutOrNull(WRITE_TIMEOUT_MS) {
+                settingsDoc.set(settings.toMap(), SetOptions.merge()).await()
+            }
+            // Sukses, atau tertunda (offline). Antrean Firestore akan menyusul;
+            // flag dibersihkan oleh listener setelah server berisi nilai yang sama.
+            null
+        } catch (e: Exception) {
+            // Server menolak (mis. rules belum dipublish). Nilai lokal tetap dipakai
+            // agar footer struk tidak berubah sendiri, dan pesan error ditampilkan.
+            e.friendlyMessage()
         }
     }
 
@@ -837,5 +857,6 @@ class PosRepository @Inject constructor(
     private companion object {
         const val HELPER_APP = "juragan38-helper"
         const val WRITE_TIMEOUT_MS = 12_000L
+        const val KEY_SETTINGS_PENDING = "settings_pending"
     }
 }
