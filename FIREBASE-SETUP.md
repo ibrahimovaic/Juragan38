@@ -6,8 +6,8 @@ Status saat ini (dicek otomatis dari `app/google-services.json`):
 |---|---|
 | Project ID | `juragan38` |
 | Package | `com.juragan38.pos` ✔ cocok |
-| Firestore Database | sudah dibuat ✔ (rules masih menolak akses) |
-| Authentication Email/Password | **BELUM diaktifkan** ✖ |
+| Firestore Database | sudah dibuat ✔ |
+| Authentication Email/Password | sudah aktif ✔ |
 | `google-services.json` | sudah ada di `app/` ✔ |
 
 ---
@@ -25,6 +25,10 @@ Status saat ini (dicek otomatis dari `app/google-services.json`):
 1. Buka https://console.firebase.google.com/project/juragan38/firestore/rules
 2. Hapus isi editor, tempel isi file **`firestore.rules`** di root project ini
 3. **Publish**
+
+> Versi ini menambah koleksi `outlets` dan `settings` serta izin hapus riwayat
+> untuk admin. Kalau sebelumnya sudah pernah publish, **publish ulang** aturan
+> terbaru agar fitur outlet/pengaturan/hapus riwayat bisa dipakai di semua HP.
 
 ## 3. Buat akun admin pertama (sekali saja)
 
@@ -55,11 +59,15 @@ orang luar yang bisa mendaftar sendiri sebagai admin).
 ## 4. Jalankan aplikasi
 
 - Login `admin` / `admin123`
+- Pilih **outlet** dan **shift** (Shift 1 / Shift 2) pada layar "Mulai Shift".
 - Saat login pertama, aplikasi otomatis:
   - mengisi 6 produk contoh (kalau koleksi `products` masih kosong)
+  - membuat outlet `Outlet Utama` dan pengaturan shift default
   - membuat akun `kasir / kasir123` dan `manajer / manajer123`
 - Setelah itu semua akun baru dibuat dari menu **Manajemen Akun** dan langsung
   bisa dipakai login di HP lain.
+- Menu **Pengaturan** (admin) dipakai untuk menambah outlet, mengatur nama/jam
+  shift, mengubah watermark & nama toko, serta menghapus riwayat penjualan.
 
 ---
 
@@ -73,12 +81,21 @@ users/{uid}
   active      : boolean
   createdAt   : timestamp
 
+outlets/{outletId}
+  name, address, active, createdAt
+
+settings/app
+  storeName, shift1Name, shift1Start, shift1End,
+  shift2Name, shift2Start, shift2End,
+  watermarkEnabled, watermarkText, watermarkOpacity, updatedAt
+
 products/{productId}
-  name, category, price, cost, stock, updatedAt
+  name, category, price, cost, stock, image, updatedAt
+  image = URL https atau data URI base64 (gambar galeri, sudah diperkecil)
 
 transactions/{transactionId}
   invoiceNo, timestamp, cashier, cashierUid, total, costTotal, profit,
-  paymentMethod, paidAmount, changeAmount, createdAt
+  paymentMethod, paidAmount, changeAmount, outlet, shift, createdAt
   items/{itemId}: productId, productName, price, cost, qty, subtotal
 ```
 

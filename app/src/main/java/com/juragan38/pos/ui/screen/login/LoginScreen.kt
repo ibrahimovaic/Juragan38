@@ -1,5 +1,6 @@
 package com.juragan38.pos.ui.screen.login
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -7,7 +8,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -26,12 +30,15 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.juragan38.pos.R
 import com.juragan38.pos.ui.AppViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -52,100 +59,113 @@ fun LoginScreen(viewModel: AppViewModel, onLoggedIn: () -> Unit) {
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(
-            text = "JURAGAN 38",
-            fontSize = 30.sp,
-            fontWeight = FontWeight.ExtraBold,
-            color = MaterialTheme.colorScheme.primary
-        )
-        Text(
-            text = "Masuk ke aplikasi kasir",
-            fontSize = 14.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 4.dp, bottom = 28.dp)
-        )
-
-        OutlinedTextField(
-            value = username,
-            onValueChange = { username = it },
-            label = { Text("Username") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth()
-        )
-        Spacer(modifier = Modifier.height(12.dp))
-        OutlinedTextField(
-            value = password,
-            onValueChange = { password = it },
-            label = { Text("Password") },
-            singleLine = true,
-            visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        if (error != null) {
-            Text(
-                text = error.orEmpty(),
-                color = MaterialTheme.colorScheme.error,
-                fontSize = 13.sp,
+        Column(
+            modifier = Modifier.widthIn(max = 420.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Image(
+                painter = painterResource(R.drawable.logo_juragan38_small),
+                contentDescription = "Logo JURAGAN 38",
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 10.dp)
+                    .size(96.dp)
+                    .clip(CircleShape)
             )
-        }
+            Text(
+                text = "JURAGAN 38",
+                fontSize = 28.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(top = 12.dp)
+            )
+            Text(
+                text = "Masuk ke aplikasi kasir",
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp, bottom = 24.dp)
+            )
 
-        Button(
-            onClick = {
-                loading = true
-                viewModel.login(username, password) {
-                    loading = false
-                    onLoggedIn()
-                }
-                scope.launch {
-                    delay(4000)
-                    loading = false
-                }
-            },
-            enabled = !loading,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 20.dp)
-                .height(50.dp)
-        ) {
-            if (loading) CircularProgressIndicator(
-                modifier = Modifier.height(22.dp),
-                strokeWidth = 2.dp,
-                color = MaterialTheme.colorScheme.onPrimary
-            ) else Text("MASUK", fontWeight = FontWeight.Bold)
-        }
+            OutlinedTextField(
+                value = username,
+                onValueChange = { username = it },
+                label = { Text("Username") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            OutlinedTextField(
+                value = password,
+                onValueChange = { password = it },
+                label = { Text("Password") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                modifier = Modifier.fillMaxWidth()
+            )
 
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 32.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text("Login Terhubung Server", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            if (error != null) {
                 Text(
-                    "Akun tersinkron antar HP. Minta Admin membuatkan akun lewat menu Manajemen Akun.",
-                    fontSize = 12.sp
-                )
-                Text(
-                    "Login pertama memerlukan koneksi internet.",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 4.dp)
+                    text = error.orEmpty(),
+                    color = MaterialTheme.colorScheme.error,
+                    fontSize = 13.sp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 10.dp)
                 )
             }
-        }
 
-        Text(
-            text = "v1.0.0",
-            fontSize = 11.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(top = 24.dp)
-        )
+            Button(
+                onClick = {
+                    loading = true
+                    viewModel.login(username, password) {
+                        loading = false
+                        onLoggedIn()
+                    }
+                    scope.launch {
+                        delay(4000)
+                        loading = false
+                    }
+                },
+                enabled = !loading,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 20.dp)
+                    .height(50.dp)
+            ) {
+                if (loading) CircularProgressIndicator(
+                    modifier = Modifier.height(22.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.onPrimary
+                ) else Text("MASUK", fontWeight = FontWeight.Bold)
+            }
+
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 28.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Login Terhubung Server", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    Text(
+                        "Akun tersinkron antar HP. Minta Admin membuatkan akun lewat menu Manajemen Akun.",
+                        fontSize = 12.sp
+                    )
+                    Text(
+                        "Login pertama memerlukan koneksi internet.",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+            }
+
+            Text(
+                text = "v1.1.0",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(top = 24.dp)
+            )
+        }
     }
 }

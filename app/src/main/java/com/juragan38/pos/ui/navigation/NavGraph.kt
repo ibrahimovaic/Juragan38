@@ -14,6 +14,8 @@ import com.juragan38.pos.ui.screen.login.LoginScreen
 import com.juragan38.pos.ui.screen.pos.PosScreen
 import com.juragan38.pos.ui.screen.products.ProductsScreen
 import com.juragan38.pos.ui.screen.reports.ReportsScreen
+import com.juragan38.pos.ui.screen.settings.SettingsScreen
+import com.juragan38.pos.ui.screen.shift.ShiftSelectScreen
 import com.juragan38.pos.ui.screen.splash.SplashScreen
 import com.juragan38.pos.ui.screen.transactions.TransactionsScreen
 import com.juragan38.pos.ui.screen.users.UsersScreen
@@ -22,12 +24,14 @@ import kotlinx.coroutines.delay
 object Routes {
     const val SPLASH = "splash"
     const val LOGIN = "login"
+    const val SHIFT = "shift"
     const val DASHBOARD = "dashboard"
     const val POS = "pos"
     const val PRODUCTS = "products"
     const val REPORTS = "reports"
     const val TRANSACTIONS = "transactions"
     const val USERS = "users"
+    const val SETTINGS = "settings"
 }
 
 @Composable
@@ -40,7 +44,11 @@ fun JuraganNavHost(viewModel: AppViewModel) {
             val currentSession by rememberUpdatedState(session)
             LaunchedEffect(Unit) {
                 delay(1200)
-                val target = if (currentSession == null) Routes.LOGIN else Routes.DASHBOARD
+                val target = when {
+                    currentSession == null -> Routes.LOGIN
+                    !currentSession!!.hasShift -> Routes.SHIFT
+                    else -> Routes.DASHBOARD
+                }
                 navController.navigate(target) {
                     popUpTo(Routes.SPLASH) { inclusive = true }
                 }
@@ -52,8 +60,25 @@ fun JuraganNavHost(viewModel: AppViewModel) {
             LoginScreen(
                 viewModel = viewModel,
                 onLoggedIn = {
-                    navController.navigate(Routes.DASHBOARD) {
+                    navController.navigate(Routes.SHIFT) {
                         popUpTo(Routes.LOGIN) { inclusive = true }
+                    }
+                }
+            )
+        }
+
+        composable(Routes.SHIFT) {
+            ShiftSelectScreen(
+                viewModel = viewModel,
+                onStarted = {
+                    navController.navigate(Routes.DASHBOARD) {
+                        popUpTo(Routes.SHIFT) { inclusive = true }
+                    }
+                },
+                onLogout = {
+                    viewModel.logout()
+                    navController.navigate(Routes.LOGIN) {
+                        popUpTo(0) { inclusive = true }
                     }
                 }
             )
@@ -67,6 +92,14 @@ fun JuraganNavHost(viewModel: AppViewModel) {
                 onOpenReports = { navController.navigate(Routes.REPORTS) },
                 onOpenTransactions = { navController.navigate(Routes.TRANSACTIONS) },
                 onOpenUsers = { navController.navigate(Routes.USERS) },
+                onOpenSettings = { navController.navigate(Routes.SETTINGS) },
+                onChangeShift = {
+                    viewModel.endShift {
+                        navController.navigate(Routes.SHIFT) {
+                            popUpTo(Routes.DASHBOARD) { inclusive = true }
+                        }
+                    }
+                },
                 onLogout = {
                     viewModel.logout()
                     navController.navigate(Routes.LOGIN) {
@@ -94,6 +127,10 @@ fun JuraganNavHost(viewModel: AppViewModel) {
 
         composable(Routes.USERS) {
             UsersScreen(viewModel = viewModel, onBack = { navController.popBackStack() })
+        }
+
+        composable(Routes.SETTINGS) {
+            SettingsScreen(viewModel = viewModel, onBack = { navController.popBackStack() })
         }
     }
 }

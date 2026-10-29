@@ -1,22 +1,32 @@
 package com.juragan38.pos.ui.screen.products
 
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -24,6 +34,7 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -38,12 +49,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.juragan38.pos.data.local.Product
 import com.juragan38.pos.ui.AppViewModel
+import com.juragan38.pos.ui.components.CenteredContent
+import com.juragan38.pos.ui.components.ProductImage
 import com.juragan38.pos.utils.toRupiah
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -84,81 +98,95 @@ fun ProductsScreen(viewModel: AppViewModel, onBack: () -> Unit) {
             }
         }
     ) { padding ->
-        if (products.isEmpty()) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .padding(24.dp),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    "Belum ada produk",
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 16.sp
-                )
-                Text(
-                    "Tekan tombol + untuk menambah produk",
-                    fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(products, key = { it.id }) { product ->
-                    Card(modifier = Modifier.fillMaxWidth()) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(product.name, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
-                                Text(
-                                    "${product.category} - stok ${product.stock}",
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    "Jual ${product.price.toRupiah()}",
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                                Text(
-                                    "HPP ${product.cost.toRupiah()} - Laba ${(product.price - product.cost).toRupiah()}",
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            IconButton(
-                                onClick = {
-                                    editing = product
-                                    showForm = true
-                                }
+        CenteredContent(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding),
+            maxWidth = 1100.dp
+        ) {
+            if (products.isEmpty()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(24.dp),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        "Belum ada produk",
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 16.sp
+                    )
+                    Text(
+                        "Tekan tombol + untuk menambah produk",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(minSize = 330.dp),
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(products, key = { it.id }) { product ->
+                        Card(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(Icons.Default.Edit, contentDescription = "Ubah")
-                            }
-                            IconButton(onClick = { deleting = product }) {
-                                Icon(
-                                    Icons.Default.Delete,
-                                    contentDescription = "Hapus",
-                                    tint = MaterialTheme.colorScheme.error
+                                ProductImage(
+                                    image = product.image,
+                                    contentDescription = product.name,
+                                    modifier = Modifier.size(64.dp)
                                 )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(product.name, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                                    Text(
+                                        "${product.category} - stok ${product.stock}",
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        "Jual ${product.price.toRupiah()}",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Text(
+                                        "HPP ${product.cost.toRupiah()} - Laba ${(product.price - product.cost).toRupiah()}",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                IconButton(
+                                    onClick = {
+                                        editing = product
+                                        showForm = true
+                                    },
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Icon(Icons.Default.Edit, contentDescription = "Ubah", modifier = Modifier.size(20.dp))
+                                }
+                                IconButton(onClick = { deleting = product }, modifier = Modifier.size(36.dp)) {
+                                    Icon(
+                                        Icons.Default.Delete,
+                                        contentDescription = "Hapus",
+                                        tint = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
                             }
                         }
                     }
+                    item { Spacer(modifier = Modifier.height(72.dp)) }
                 }
-                item { Spacer(modifier = Modifier.height(72.dp)) }
             }
         }
     }
@@ -166,6 +194,7 @@ fun ProductsScreen(viewModel: AppViewModel, onBack: () -> Unit) {
     if (showForm) {
         ProductFormDialog(
             initial = editing,
+            viewModel = viewModel,
             onDismiss = { showForm = false },
             onSave = { product ->
                 viewModel.saveProduct(product)
@@ -199,14 +228,32 @@ fun ProductsScreen(viewModel: AppViewModel, onBack: () -> Unit) {
 @Composable
 private fun ProductFormDialog(
     initial: Product?,
+    viewModel: AppViewModel,
     onDismiss: () -> Unit,
     onSave: (Product) -> Unit
 ) {
+    val context = LocalContext.current
     var name by remember { mutableStateOf(initial?.name.orEmpty()) }
     var category by remember { mutableStateOf(initial?.category ?: "Umum") }
     var price by remember { mutableStateOf(initial?.price?.toInt()?.toString().orEmpty()) }
     var cost by remember { mutableStateOf(initial?.cost?.toInt()?.toString().orEmpty()) }
     var stock by remember { mutableStateOf(initial?.stock?.toString() ?: "0") }
+    var image by remember { mutableStateOf(initial?.image.orEmpty()) }
+    var encoding by remember { mutableStateOf(false) }
+
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            encoding = true
+            viewModel.encodeImage(uri) { encoded ->
+                encoding = false
+                if (encoded != null) {
+                    image = encoded
+                } else {
+                    Toast.makeText(context, "Gambar terlalu besar atau gagal dibaca", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
 
     val valid = name.isNotBlank() && (price.toDoubleOrNull() ?: 0.0) > 0
 
@@ -214,7 +261,45 @@ private fun ProductFormDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (initial == null) "Tambah Produk" else "Ubah Produk") },
         text = {
-            Column {
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 440.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    ProductImage(
+                        image = image,
+                        contentDescription = "Gambar produk",
+                        modifier = Modifier.size(72.dp)
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        OutlinedButton(
+                            onClick = { picker.launch("image/*") },
+                            enabled = !encoding
+                        ) {
+                            Icon(
+                                Icons.Default.PhotoCamera,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(if (encoding) "Memproses..." else "Pilih Gambar")
+                        }
+                        if (image.isNotBlank()) {
+                            TextButton(onClick = { image = "" }) {
+                                Text("Hapus gambar", fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    "Gambar dari galeri otomatis diperkecil dan ikut tersinkron ke HP lain.",
+                    fontSize = 10.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(8.dp))
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
@@ -259,6 +344,16 @@ private fun ProductFormDialog(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.fillMaxWidth()
                 )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = if (image.startsWith("http")) image else "",
+                    onValueChange = { image = it.trim() },
+                    label = { Text("Atau tautkan URL gambar (opsional)") },
+                    placeholder = { Text("https://...") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
         },
         confirmButton = {
@@ -271,7 +366,8 @@ private fun ProductFormDialog(
                             category = category.ifBlank { "Umum" }.trim(),
                             price = price.toDoubleOrNull() ?: 0.0,
                             cost = cost.toDoubleOrNull() ?: 0.0,
-                            stock = stock.toIntOrNull() ?: 0
+                            stock = stock.toIntOrNull() ?: 0,
+                            image = image.trim()
                         )
                     )
                 },

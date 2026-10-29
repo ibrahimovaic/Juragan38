@@ -1,10 +1,14 @@
 package com.juragan38.pos.ui
 
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.juragan38.pos.data.Session
 import com.juragan38.pos.data.SessionManager
+import com.juragan38.pos.data.ThemeMode
+import com.juragan38.pos.data.local.AppSettings
 import com.juragan38.pos.data.local.CartItem
+import com.juragan38.pos.data.local.Outlet
 import com.juragan38.pos.data.local.Product
 import com.juragan38.pos.data.local.Transaction
 import com.juragan38.pos.data.local.User
@@ -34,6 +38,12 @@ class AppViewModel @Inject constructor(
     val users: StateFlow<List<User>> = repository.users
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    val outlets: StateFlow<List<Outlet>> = repository.outlets
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val settings: StateFlow<AppSettings> = repository.settings
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppSettings())
+
     val session: StateFlow<Session?> = sessionManager.session
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
@@ -46,18 +56,29 @@ class AppViewModel @Inject constructor(
     private val _syncing = MutableStateFlow(false)
     val syncing: StateFlow<Boolean> = _syncing.asStateFlow()
 
+    private val _themeMode = MutableStateFlow(ThemeMode.SYSTEM)
+    val themeMode: StateFlow<String> = _themeMode.asStateFlow()
+
     init {
         viewModelScope.launch {
             if (!repository.hasSession()) {
                 sessionManager.clear()
-                return@launch
+            } else {
+                val saved = sessionManager.session.first()
+                if (saved != null) {
+                    repository.startRealtimeSync(viewModelScope, saved.role)
+                }
             }
-            val saved = sessionManager.session.first()
-            if (saved != null) {
-                repository.startRealtimeSync(viewModelScope, saved.role)
+        }
+        viewModelScope.launch {
+            sessionManager.session.collect { s ->
+                _themeMode.value =
+                    if (s == null) ThemeMode.SYSTEM else sessionManager.themeOf(s.username)
             }
         }
     }
+
+    // --------------------------------------------------------------- auth
 
     fun login(username: String, password: String, onSuccess: () -> Unit) {
         viewModelScope.launch {
@@ -69,7 +90,13 @@ class AppViewModel @Inject constructor(
             _syncing.value = true
             try {
                 val user = repository.login(username.trim(), password)
-                sessionManager.save(Session(user.fullName, user.username, user.role))
+                sessionManager.save(
+                    Session(
+                        fullName = user.fullName,
+                        username = user.username,
+                        role = user.role
+                    )
+                )
                 repository.startRealtimeSync(viewModelScope, user.role)
                 if (user.role == "ADMIN") {
                     repository.prepareFirstAdminData()
@@ -91,12 +118,47 @@ class AppViewModel @Inject constructor(
         }
     }
 
+    // -------------------------------------------------------------- shift
+
+    fun startShift(outlet: Outlet, shiftKey: String, onDone: () -> Unit) {
+        viewModelScope.launch {
+            sessionManager.saveShift(outlet.id, outlet.name, shiftKey)
+            _cart.value = emptyList()
+            onDone()
+        }
+    }
+
+    fun endShift(onDone: () -> Unit) {
+        viewModelScope.launch {
+            sessionManager.clearShift()
+            _cart.value = emptyList()
+            onDone()
+        }
+    }
+
+    // --------------------------------------------------------------- tema
+
+    fun setTheme(mode: String) {
+        _themeMode.value = mode
+        val username = session.value?.username ?: return
+        viewModelScope.launch { sessionManager.setTheme(username, mode) }
+    }
+
+    // --------------------------------------------------------------- cart
+
     fun addToCart(product: Product) {
         if (product.stock <= 0) return
         val current = _cart.value
         val existing = current.firstOrNull { it.productId == product.id }
         _cart.value = if (existing == null) {
-            current + CartItem(product.id, product.name, product.price, product.cost, 1)
+            current + CartItem(
+                productId = product.id,
+                name = product.name,
+                price = product.price,
+                cost = product.cost,
+                qty = 1,
+                image = product.image
+            )
         } else {
             if (existing.qty >= product.stock) return
             current.map {
@@ -130,18 +192,23 @@ class AppViewModel @Inject constructor(
                 onDone(null)
                 return@launch
             }
+            val s = session.value
             val result = runCatching {
                 repository.checkout(
                     items = items,
-                    cashier = session.value?.fullName ?: "Kasir",
+                    cashier = s?.fullName ?: "Kasir",
                     paymentMethod = paymentMethod,
-                    paidAmount = paidAmount
+                    paidAmount = paidAmount,
+                    outlet = s?.outletName.orEmpty(),
+                    shift = settings.value.shiftLabel(s?.shiftKey.orEmpty())
                 )
             }.getOrNull()
             if (result != null) _cart.value = emptyList()
             onDone(result)
         }
     }
+
+    // ------------------------------------------------------------ products
 
     fun saveProduct(product: Product) {
         viewModelScope.launch { runCatching { repository.saveProduct(product) } }
@@ -150,6 +217,37 @@ class AppViewModel @Inject constructor(
     fun deleteProduct(product: Product) {
         viewModelScope.launch { runCatching { repository.deleteProduct(product) } }
     }
+
+    fun encodeImage(uri: Uri, onResult: (String?) -> Unit) {
+        viewModelScope.launch { onResult(repository.encodeImage(uri)) }
+    }
+
+    // ------------------------------------------------------------- outlets
+
+    fun saveOutlet(outlet: Outlet, onResult: (String?) -> Unit) {
+        viewModelScope.launch {
+            val error = runCatching { repository.saveOutlet(outlet) }
+                .exceptionOrNull()
+                ?.message
+            onResult(error)
+        }
+    }
+
+    fun deleteOutlet(outlet: Outlet, onResult: (String?) -> Unit) {
+        viewModelScope.launch {
+            onResult(repository.deleteOutlet(outlet))
+        }
+    }
+
+    // ------------------------------------------------------------ settings
+
+    fun saveSettings(settings: AppSettings, onResult: (String?) -> Unit) {
+        viewModelScope.launch {
+            onResult(repository.saveSettings(settings))
+        }
+    }
+
+    // --------------------------------------------------------------- users
 
     fun saveUser(user: User, password: String?, onResult: (String?) -> Unit) {
         viewModelScope.launch {
@@ -164,6 +262,20 @@ class AppViewModel @Inject constructor(
             val error = runCatching { repository.deleteUser(user) }
                 .getOrElse { it.message ?: "Gagal menghapus akun" }
             onResult(error)
+        }
+    }
+
+    // ---------------------------------------------------------- transaksi
+
+    fun deleteTransaction(transaction: Transaction, onResult: (String?) -> Unit) {
+        viewModelScope.launch {
+            onResult(repository.deleteTransaction(transaction))
+        }
+    }
+
+    fun deleteAllTransactions(onResult: (String?) -> Unit) {
+        viewModelScope.launch {
+            onResult(repository.deleteAllTransactions())
         }
     }
 }

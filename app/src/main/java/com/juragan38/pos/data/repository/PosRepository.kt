@@ -1,6 +1,10 @@
 package com.juragan38.pos.data.repository
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
+import android.util.Base64
 import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseNetworkException
 import com.google.firebase.auth.FirebaseAuth
@@ -14,16 +18,22 @@ import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.SetOptions
 import com.juragan38.pos.data.local.AppDatabase
+import com.juragan38.pos.data.local.AppSettings
 import com.juragan38.pos.data.local.CartItem
+import com.juragan38.pos.data.local.Outlet
 import com.juragan38.pos.data.local.Product
 import com.juragan38.pos.data.local.Transaction
 import com.juragan38.pos.data.local.TransactionItem
 import com.juragan38.pos.data.local.User
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -41,20 +51,29 @@ class PosRepository @Inject constructor(
 ) {
 
     private val userDao = database.userDao()
+    private val outletDao = database.outletDao()
     private val productDao = database.productDao()
     private val transactionDao = database.transactionDao()
+    private val settingsDao = database.settingsDao()
 
     val products: Flow<List<Product>> = productDao.all()
     val transactions: Flow<List<Transaction>> = transactionDao.all()
     val users: Flow<List<User>> = userDao.allActive()
+    val outlets: Flow<List<Outlet>> = outletDao.allActive()
+    val settings: Flow<AppSettings> = settingsDao.settings()
+        .map { it ?: AppSettings() }
 
     private var productReg: ListenerRegistration? = null
     private var transactionReg: ListenerRegistration? = null
     private var userReg: ListenerRegistration? = null
+    private var outletReg: ListenerRegistration? = null
+    private var settingsReg: ListenerRegistration? = null
 
     private val accounts = firestore.collection("users")
     private val productCol = firestore.collection("products")
     private val transactionCol = firestore.collection("transactions")
+    private val outletCol = firestore.collection("outlets")
+    private val settingsDoc = firestore.collection("settings").document("app")
 
     // ---------------------------------------------------------------- auth
 
@@ -144,11 +163,44 @@ class PosRepository @Inject constructor(
             .limit(500)
             .addSnapshotListener { snapshot, _ ->
                 if (snapshot == null) return@addSnapshotListener
-                val mapped = snapshot.documents.mapNotNull { it.toTransaction() }
-                if (mapped.isNotEmpty()) {
-                    scope.launch { transactionDao.upsertAll(mapped) }
+                val docs = snapshot.documents
+                val fromCache = snapshot.metadata.isFromCache
+                val mapped = docs.mapNotNull { it.toTransaction() }
+                scope.launch {
+                    if (mapped.isNotEmpty()) transactionDao.upsertAll(mapped)
+                    // Transaksi yang sudah dihapus admin di HP lain ikut dibersihkan.
+                    if (!fromCache) {
+                        val ids = docs.map { it.id }
+                        if (ids.isEmpty()) {
+                            transactionDao.clearAllItems()
+                            transactionDao.clearAll()
+                        } else {
+                            transactionDao.deleteMissing(ids)
+                        }
+                    }
                 }
             }
+
+        outletReg = outletCol.addSnapshotListener { snapshot, _ ->
+            if (snapshot == null) return@addSnapshotListener
+            val docs = snapshot.documents
+            val fromCache = snapshot.metadata.isFromCache
+            val mapped = docs.mapNotNull { it.toOutlet() }
+            scope.launch {
+                if (mapped.isNotEmpty()) outletDao.upsertAll(mapped)
+                if (!fromCache) {
+                    val ids = docs.map { it.id }
+                    if (ids.isEmpty()) outletDao.clear() else outletDao.deleteMissing(ids)
+                }
+            }
+        }
+
+        settingsReg = settingsDoc.addSnapshotListener { snapshot, _ ->
+            if (snapshot != null && snapshot.exists()) {
+                val mapped = snapshot.toSettings()
+                scope.launch { settingsDao.upsert(mapped) }
+            }
+        }
 
         if (role == "ADMIN") {
             userReg = accounts.addSnapshotListener { snapshot, _ ->
@@ -172,9 +224,13 @@ class PosRepository @Inject constructor(
         productReg?.remove()
         transactionReg?.remove()
         userReg?.remove()
+        outletReg?.remove()
+        settingsReg?.remove()
         productReg = null
         transactionReg = null
         userReg = null
+        outletReg = null
+        settingsReg = null
     }
 
     // ------------------------------------------------------------- seeding
@@ -182,6 +238,7 @@ class PosRepository @Inject constructor(
     /**
      * Dipanggil sekali setelah admin pertama berhasil login:
      * - isi produk contoh kalau koleksi produk masih kosong
+     * - buat outlet utama & pengaturan default
      * - buat akun demo kasir & manajer kalau baru ada 1 akun (admin)
      */
     suspend fun prepareFirstAdminData() {
@@ -195,6 +252,21 @@ class PosRepository @Inject constructor(
                     productDao.upsert(product.copy(id = id))
                 }
                 batch.commit()
+            }
+
+            val outletSnap = outletCol.limit(1).get().await()
+            if (outletSnap.isEmpty) {
+                val id = UUID.randomUUID().toString()
+                val outlet = Outlet(id = id, name = "Outlet Utama", address = "")
+                runCatching { outletCol.document(id).set(outlet.toMap()).await() }
+                outletDao.upsert(outlet)
+            }
+
+            val settingsSnap = settingsDoc.get().await()
+            if (!settingsSnap.exists()) {
+                val default = AppSettings()
+                runCatching { settingsDoc.set(default.toMap()).await() }
+                settingsDao.upsert(default)
             }
 
             val accountsSnap = accounts.limit(2).get().await()
@@ -233,6 +305,32 @@ class PosRepository @Inject constructor(
         productDao.delete(product)
         productCol.document(product.id).delete()
     }
+
+    // ------------------------------------------------------------- outlets
+
+    suspend fun saveOutlet(outlet: Outlet) {
+        val id = outlet.id.ifBlank { UUID.randomUUID().toString() }
+        val saved = outlet.copy(id = id)
+        outletDao.upsert(saved)
+        runCatching { outletCol.document(id).set(saved.toMap()).await() }
+    }
+
+    suspend fun deleteOutlet(outlet: Outlet): String? {
+        if (outletDao.count() <= 1) return "Minimal harus ada 1 outlet"
+        return runCatching<String?> {
+            outletDao.delete(outlet)
+            outletCol.document(outlet.id).delete()
+            null
+        }.getOrElse { it.friendlyMessage() }
+    }
+
+    // ------------------------------------------------------------ settings
+
+    suspend fun saveSettings(settings: AppSettings): String? = runCatching<String?> {
+        settingsDao.upsert(settings)
+        settingsDoc.set(settings.toMap()).await()
+        null
+    }.getOrElse { it.friendlyMessage() }
 
     // --------------------------------------------------------------- users
 
@@ -351,7 +449,9 @@ class PosRepository @Inject constructor(
         items: List<CartItem>,
         cashier: String,
         paymentMethod: String,
-        paidAmount: Double
+        paidAmount: Double,
+        outlet: String,
+        shift: String
     ): Transaction {
         val total = items.sumOf { it.subtotal }
         val costTotal = items.sumOf { it.cost * it.qty }
@@ -369,7 +469,9 @@ class PosRepository @Inject constructor(
             profit = profit,
             paymentMethod = paymentMethod,
             paidAmount = paidAmount,
-            changeAmount = if (paidAmount > total) paidAmount - total else 0.0
+            changeAmount = if (paidAmount > total) paidAmount - total else 0.0,
+            outlet = outlet,
+            shift = shift
         )
 
         // 1) simpan lokal dulu (selalu berhasil walau offline)
@@ -409,6 +511,8 @@ class PosRepository @Inject constructor(
                 "paymentMethod" to transaction.paymentMethod,
                 "paidAmount" to transaction.paidAmount,
                 "changeAmount" to transaction.changeAmount,
+                "outlet" to transaction.outlet,
+                "shift" to transaction.shift,
                 "createdAt" to FieldValue.serverTimestamp()
             )
         )
@@ -439,6 +543,86 @@ class PosRepository @Inject constructor(
     suspend fun itemsOf(transactionId: String): List<TransactionItem> =
         transactionDao.itemsOf(transactionId)
 
+    /** Hapus satu transaksi (lokal + server). Admin saja. */
+    suspend fun deleteTransaction(transaction: Transaction): String? {
+        transactionDao.deleteItemsOf(transaction.id)
+        transactionDao.deleteById(transaction.id)
+        return runCatching<String?> {
+            val items = transactionCol.document(transaction.id).collection("items")
+                .limit(200).get().await()
+            val batch = firestore.batch()
+            items.documents.forEach { batch.delete(it.reference) }
+            batch.delete(transactionCol.document(transaction.id))
+            batch.commit()
+            null
+        }.getOrElse { it.friendlyMessage() }
+    }
+
+    /** Hapus seluruh riwayat penjualan (lokal + server). Admin saja. */
+    suspend fun deleteAllTransactions(): String? {
+        transactionDao.clearAllItems()
+        transactionDao.clearAll()
+        return runCatching<String?> {
+            val docs = transactionCol.limit(500).get().await().documents
+            var batch = firestore.batch()
+            var ops = 0
+            for (doc in docs) {
+                val items = runCatching {
+                    doc.reference.collection("items").limit(200).get().await()
+                }.getOrNull()
+                items?.documents?.forEach {
+                    batch.delete(it.reference)
+                    ops++
+                }
+                batch.delete(doc.reference)
+                ops++
+                if (ops >= 400) {
+                    batch.commit()
+                    batch = firestore.batch()
+                    ops = 0
+                }
+            }
+            if (ops > 0) batch.commit()
+            null
+        }.getOrElse { it.friendlyMessage() }
+    }
+
+    // --------------------------------------------------------------- gambar
+
+    /**
+     * Mengubah gambar dari galeri menjadi data URI base64 yang cukup kecil
+     * untuk disimpan di Firestore (maks ~320px, JPEG 65%).
+     */
+    suspend fun encodeImage(uri: Uri, maxSize: Int = 320, quality: Int = 65): String? =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val original = context.contentResolver.openInputStream(uri)?.use {
+                    BitmapFactory.decodeStream(it)
+                } ?: return@runCatching null
+
+                val longest = maxOf(original.width, original.height)
+                val scaled = if (longest > maxSize) {
+                    val ratio = maxSize.toFloat() / longest
+                    Bitmap.createScaledBitmap(
+                        original,
+                        (original.width * ratio).toInt().coerceAtLeast(1),
+                        (original.height * ratio).toInt().coerceAtLeast(1),
+                        true
+                    )
+                } else {
+                    original
+                }
+
+                val out = ByteArrayOutputStream()
+                scaled.compress(Bitmap.CompressFormat.JPEG, quality, out)
+                if (scaled !== original) scaled.recycle()
+                original.recycle()
+
+                val encoded = Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+                if (encoded.length > 700_000) null else "data:image/jpeg;base64,$encoded"
+            }.getOrNull()
+        }
+
     // ------------------------------------------------------------ mapping
 
     private fun Product.toMap(): Map<String, Any> = mapOf(
@@ -447,6 +631,7 @@ class PosRepository @Inject constructor(
         "price" to price,
         "cost" to cost,
         "stock" to stock.toLong(),
+        "image" to image,
         "updatedAt" to FieldValue.serverTimestamp()
     )
 
@@ -458,6 +643,27 @@ class PosRepository @Inject constructor(
         "createdAt" to FieldValue.serverTimestamp()
     )
 
+    private fun Outlet.toMap(): Map<String, Any> = mapOf(
+        "name" to name,
+        "address" to address,
+        "active" to active,
+        "createdAt" to FieldValue.serverTimestamp()
+    )
+
+    private fun AppSettings.toMap(): Map<String, Any> = mapOf(
+        "storeName" to storeName,
+        "shift1Name" to shift1Name,
+        "shift1Start" to shift1Start,
+        "shift1End" to shift1End,
+        "shift2Name" to shift2Name,
+        "shift2Start" to shift2Start,
+        "shift2End" to shift2End,
+        "watermarkEnabled" to watermarkEnabled,
+        "watermarkText" to watermarkText,
+        "watermarkOpacity" to watermarkOpacity.toDouble(),
+        "updatedAt" to FieldValue.serverTimestamp()
+    )
+
     private fun DocumentSnapshot.toProduct(): Product? {
         return try {
             Product(
@@ -466,11 +672,42 @@ class PosRepository @Inject constructor(
                 category = getString("category") ?: "Umum",
                 price = getDouble("price") ?: 0.0,
                 cost = getDouble("cost") ?: 0.0,
-                stock = (getLong("stock") ?: 0L).toInt()
+                stock = (getLong("stock") ?: 0L).toInt(),
+                image = getString("image").orEmpty()
             )
         } catch (e: Exception) {
             null
         }
+    }
+
+    private fun DocumentSnapshot.toOutlet(): Outlet? {
+        return try {
+            Outlet(
+                id = id,
+                name = getString("name") ?: return null,
+                address = getString("address").orEmpty(),
+                active = getBoolean("active") != false
+            )
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun DocumentSnapshot.toSettings(): AppSettings {
+        val default = AppSettings()
+        return AppSettings(
+            id = 1,
+            storeName = getString("storeName") ?: default.storeName,
+            shift1Name = getString("shift1Name") ?: default.shift1Name,
+            shift1Start = getString("shift1Start") ?: default.shift1Start,
+            shift1End = getString("shift1End") ?: default.shift1End,
+            shift2Name = getString("shift2Name") ?: default.shift2Name,
+            shift2Start = getString("shift2Start") ?: default.shift2Start,
+            shift2End = getString("shift2End") ?: default.shift2End,
+            watermarkEnabled = getBoolean("watermarkEnabled") ?: default.watermarkEnabled,
+            watermarkText = getString("watermarkText") ?: default.watermarkText,
+            watermarkOpacity = (getDouble("watermarkOpacity") ?: default.watermarkOpacity.toDouble()).toFloat()
+        )
     }
 
     private fun DocumentSnapshot.toTransaction(): Transaction? {
@@ -486,7 +723,9 @@ class PosRepository @Inject constructor(
                 profit = getDouble("profit") ?: 0.0,
                 paymentMethod = getString("paymentMethod") ?: "TUNAI",
                 paidAmount = getDouble("paidAmount") ?: 0.0,
-                changeAmount = getDouble("changeAmount") ?: 0.0
+                changeAmount = getDouble("changeAmount") ?: 0.0,
+                outlet = getString("outlet").orEmpty(),
+                shift = getString("shift").orEmpty()
             )
         } catch (e: Exception) {
             null
@@ -508,7 +747,7 @@ class PosRepository @Inject constructor(
         }
     }
 
-    private fun Exception.friendlyMessage(): String = when (this) {
+    private fun Throwable.friendlyMessage(): String = when (this) {
         is FirebaseNetworkException -> "Tidak ada koneksi internet"
         is FirebaseAuthUserCollisionException -> "Username sudah dipakai"
         else -> message ?: "Terjadi kesalahan, coba lagi"

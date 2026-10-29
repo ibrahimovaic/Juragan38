@@ -1,5 +1,6 @@
 package com.juragan38.pos.ui.screen.splash
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -12,10 +13,13 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.juragan38.pos.R
 
 @Composable
 fun SplashScreen() {
@@ -27,20 +31,13 @@ fun SplashScreen() {
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Column(
+        Image(
+            painter = painterResource(R.drawable.logo_juragan38_small),
+            contentDescription = "Logo JURAGAN 38",
             modifier = Modifier
-                .size(110.dp)
-                .background(MaterialTheme.colorScheme.tertiary, CircleShape),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                text = "38",
-                fontSize = 40.sp,
-                fontWeight = FontWeight.ExtraBold,
-                color = MaterialTheme.colorScheme.primary
-            )
-        }
+                .size(130.dp)
+                .clip(CircleShape)
+        )
         Text(
             text = "JURAGAN 38",
             color = MaterialTheme.colorScheme.onPrimary,

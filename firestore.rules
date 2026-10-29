@@ -33,15 +33,30 @@ service cloud.firestore {
          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock']));
     }
 
+    // Outlet / cabang. Dibaca semua user, diubah admin.
+    match /outlets/{id} {
+      allow read: if signedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Pengaturan bersama: shift, jam kerja, watermark, nama toko.
+    match /settings/{id} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
     match /transactions/{id} {
       allow read: if signedIn();
       allow create: if signedIn();
-      allow update, delete: if false;
+      // Riwayat penjualan hanya bisa dihapus admin.
+      allow update: if false;
+      allow delete: if isAdmin();
 
       match /items/{itemId} {
         allow read: if signedIn();
         allow create: if signedIn();
-        allow update, delete: if false;
+        allow update: if false;
+        allow delete: if isAdmin();
       }
     }
   }
