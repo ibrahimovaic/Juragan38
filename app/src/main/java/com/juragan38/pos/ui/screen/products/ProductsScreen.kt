@@ -3,7 +3,9 @@ package com.juragan38.pos.ui.screen.products
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -24,12 +26,16 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -54,6 +60,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.juragan38.pos.data.local.Outlet
 import com.juragan38.pos.data.local.Product
 import com.juragan38.pos.ui.AppViewModel
 import com.juragan38.pos.ui.components.CenteredContent
@@ -64,10 +71,21 @@ import com.juragan38.pos.utils.toRupiah
 @Composable
 fun ProductsScreen(viewModel: AppViewModel, onBack: () -> Unit) {
     val products by viewModel.products.collectAsState()
+    val outlets by viewModel.outlets.collectAsState()
 
     var editing by remember { mutableStateOf<Product?>(null) }
     var showForm by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf<Product?>(null) }
+    var outletFilter by remember { mutableStateOf("") }
+
+    // "" = semua outlet. Produk tanpa outlet tetap tampil di filter mana pun.
+    val filtered = remember(products, outletFilter) {
+        if (outletFilter.isBlank()) {
+            products
+        } else {
+            products.filter { it.outletId.isBlank() || it.outletId == outletFilter }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -104,88 +122,125 @@ fun ProductsScreen(viewModel: AppViewModel, onBack: () -> Unit) {
                 .padding(padding),
             maxWidth = 1100.dp
         ) {
-            if (products.isEmpty()) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(24.dp),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        "Belum ada produk",
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 16.sp
-                    )
-                    Text(
-                        "Tekan tombol + untuk menambah produk",
-                        fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+            Column(modifier = Modifier.fillMaxSize()) {
+                if (outlets.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilterChip(
+                            selected = outletFilter.isBlank(),
+                            onClick = { outletFilter = "" },
+                            label = { Text("Semua outlet", fontSize = 12.sp) }
+                        )
+                        outlets.forEach { outlet ->
+                            FilterChip(
+                                selected = outletFilter == outlet.id,
+                                onClick = { outletFilter = outlet.id },
+                                label = { Text(outlet.name, fontSize = 12.sp) }
+                            )
+                        }
+                    }
                 }
-            } else {
-                LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 330.dp),
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(products, key = { it.id }) { product ->
-                        Card(modifier = Modifier.fillMaxWidth()) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                ProductImage(
-                                    image = product.image,
-                                    contentDescription = product.name,
-                                    modifier = Modifier.size(64.dp)
-                                )
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(product.name, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
-                                    Text(
-                                        "${product.category} - stok ${product.stock}",
-                                        fontSize = 12.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Text(
-                                        "Jual ${product.price.toRupiah()}",
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                    Text(
-                                        "HPP ${product.cost.toRupiah()} - Laba ${(product.price - product.cost).toRupiah()}",
-                                        fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                IconButton(
-                                    onClick = {
-                                        editing = product
-                                        showForm = true
-                                    },
-                                    modifier = Modifier.size(36.dp)
+
+                if (filtered.isEmpty()) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(24.dp),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            if (products.isEmpty()) "Belum ada produk" else "Tidak ada produk di outlet ini",
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 16.sp
+                        )
+                        Text(
+                            if (products.isEmpty()) {
+                                "Tekan tombol + untuk menambah produk"
+                            } else {
+                                "Pilih outlet lain atau tambah produk baru"
+                            },
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                } else {
+                    LazyVerticalGrid(
+                        columns = GridCells.Adaptive(minSize = 330.dp),
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(filtered, key = { it.id }) { product ->
+                            Card(modifier = Modifier.fillMaxWidth()) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Icon(Icons.Default.Edit, contentDescription = "Ubah", modifier = Modifier.size(20.dp))
-                                }
-                                IconButton(onClick = { deleting = product }, modifier = Modifier.size(36.dp)) {
-                                    Icon(
-                                        Icons.Default.Delete,
-                                        contentDescription = "Hapus",
-                                        tint = MaterialTheme.colorScheme.error,
-                                        modifier = Modifier.size(20.dp)
+                                    ProductImage(
+                                        image = product.image,
+                                        contentDescription = product.name,
+                                        modifier = Modifier.size(64.dp)
                                     )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(product.name, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                                        Text(
+                                            "${product.category} - stok ${product.stock}",
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            "Outlet: " + (
+                                                outlets.firstOrNull { it.id == product.outletId }?.name
+                                                    ?: "Semua outlet"
+                                                ),
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            "Jual ${product.price.toRupiah()}",
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Text(
+                                            "HPP ${product.cost.toRupiah()} - Laba ${(product.price - product.cost).toRupiah()}",
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = {
+                                            editing = product
+                                            showForm = true
+                                        },
+                                        modifier = Modifier.size(36.dp)
+                                    ) {
+                                        Icon(Icons.Default.Edit, contentDescription = "Ubah", modifier = Modifier.size(20.dp))
+                                    }
+                                    IconButton(onClick = { deleting = product }, modifier = Modifier.size(36.dp)) {
+                                        Icon(
+                                            Icons.Default.Delete,
+                                            contentDescription = "Hapus",
+                                            tint = MaterialTheme.colorScheme.error,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
                                 }
                             }
                         }
+                        item { Spacer(modifier = Modifier.height(72.dp)) }
                     }
-                    item { Spacer(modifier = Modifier.height(72.dp)) }
                 }
             }
         }
@@ -194,6 +249,7 @@ fun ProductsScreen(viewModel: AppViewModel, onBack: () -> Unit) {
     if (showForm) {
         ProductFormDialog(
             initial = editing,
+            outlets = outlets,
             viewModel = viewModel,
             onDismiss = { showForm = false },
             onSave = { product ->
@@ -228,6 +284,7 @@ fun ProductsScreen(viewModel: AppViewModel, onBack: () -> Unit) {
 @Composable
 private fun ProductFormDialog(
     initial: Product?,
+    outlets: List<Outlet>,
     viewModel: AppViewModel,
     onDismiss: () -> Unit,
     onSave: (Product) -> Unit
@@ -239,6 +296,8 @@ private fun ProductFormDialog(
     var cost by remember { mutableStateOf(initial?.cost?.toInt()?.toString().orEmpty()) }
     var stock by remember { mutableStateOf(initial?.stock?.toString() ?: "0") }
     var image by remember { mutableStateOf(initial?.image.orEmpty()) }
+    var outletId by remember { mutableStateOf(initial?.outletId.orEmpty()) }
+    var outletMenu by remember { mutableStateOf(false) }
     var encoding by remember { mutableStateOf(false) }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -316,6 +375,55 @@ private fun ProductFormDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(modifier = Modifier.height(8.dp))
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(
+                        onClick = { outletMenu = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Outlet",
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                outlets.firstOrNull { it.id == outletId }?.name
+                                    ?: "Semua outlet",
+                                fontSize = 13.sp
+                            )
+                        }
+                        Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                    }
+                    DropdownMenu(
+                        expanded = outletMenu,
+                        onDismissRequest = { outletMenu = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Semua outlet", fontSize = 13.sp) },
+                            onClick = {
+                                outletId = ""
+                                outletMenu = false
+                            }
+                        )
+                        outlets.forEach { outlet ->
+                            DropdownMenuItem(
+                                text = { Text(outlet.name, fontSize = 13.sp) },
+                                onClick = {
+                                    outletId = outlet.id
+                                    outletMenu = false
+                                }
+                            )
+                        }
+                    }
+                }
+                Text(
+                    "Produk hanya muncul di kasir outlet yang dipilih. \"Semua outlet\" " +
+                        "berarti produk tampil di semua outlet.",
+                    fontSize = 10.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+                Spacer(modifier = Modifier.height(8.dp))
                 Row {
                     OutlinedTextField(
                         value = price,
@@ -367,7 +475,8 @@ private fun ProductFormDialog(
                             price = price.toDoubleOrNull() ?: 0.0,
                             cost = cost.toDoubleOrNull() ?: 0.0,
                             stock = stock.toIntOrNull() ?: 0,
-                            image = image.trim()
+                            image = image.trim(),
+                            outletId = outletId
                         )
                     )
                 },

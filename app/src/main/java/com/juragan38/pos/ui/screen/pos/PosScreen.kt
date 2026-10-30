@@ -90,6 +90,17 @@ fun PosScreen(viewModel: AppViewModel, onBack: () -> Unit) {
     val outlets by viewModel.outlets.collectAsState()
     val context = LocalContext.current
 
+    // Produk mengikuti outlet shift yang sedang aktif. Produk tanpa outlet
+    // (data lama) tetap tampil di semua outlet.
+    val outletId = session?.outletId.orEmpty()
+    val visibleProducts = remember(products, outletId) {
+        if (outletId.isBlank()) {
+            products
+        } else {
+            products.filter { it.outletId.isBlank() || it.outletId == outletId }
+        }
+    }
+
     // Alamat outlet yang sedang dipakai shift ini (untuk header struk).
     val outletAddress = remember(outlets, session?.outletId, session?.outletName) {
         (outlets.firstOrNull { it.id == session?.outletId }
@@ -159,7 +170,7 @@ fun PosScreen(viewModel: AppViewModel, onBack: () -> Unit) {
                         if (outlet.isNotBlank() || shift != "-") {
                             Text(
                                 listOf(outlet, shift).filter { it.isNotBlank() && it != "-" }
-                                    .joinToString(" • "),
+                                    .joinToString(" â€¢ "),
                                 fontSize = 10.sp
                             )
                         }
@@ -208,14 +219,21 @@ fun PosScreen(viewModel: AppViewModel, onBack: () -> Unit) {
             }
         }
     ) { padding ->
-        if (products.isEmpty()) {
+        if (visibleProducts.isEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding),
                 contentAlignment = Alignment.Center
             ) {
-                Text("Belum ada produk. Tambahkan produk dulu di menu Manajemen Produk.")
+                Text(
+                    if (products.isEmpty()) {
+                        "Belum ada produk. Tambahkan produk dulu di menu Manajemen Produk."
+                    } else {
+                        "Belum ada produk untuk outlet ini. Atur outlet produk di Manajemen Produk."
+                    },
+                    modifier = Modifier.padding(24.dp)
+                )
             }
         } else if (wide) {
             Row(
@@ -225,7 +243,7 @@ fun PosScreen(viewModel: AppViewModel, onBack: () -> Unit) {
             ) {
                 CenteredContent(modifier = Modifier.weight(1.9f), maxWidth = 1200.dp) {
                     ProductGrid(
-                        products = products,
+                        products = visibleProducts,
                         columns = columns,
                         onAdd = { viewModel.addToCart(it) }
                     )
@@ -234,7 +252,7 @@ fun PosScreen(viewModel: AppViewModel, onBack: () -> Unit) {
                     cart = cart,
                     total = total,
                     onIncrease = { item ->
-                        val product = products.firstOrNull { it.id == item.productId }
+                        val product = visibleProducts.firstOrNull { it.id == item.productId }
                         if (product != null) viewModel.addToCart(product)
                     },
                     onDecrease = { viewModel.decrease(it) },
@@ -248,7 +266,7 @@ fun PosScreen(viewModel: AppViewModel, onBack: () -> Unit) {
         } else {
             CenteredContent(modifier = Modifier.fillMaxSize(), maxWidth = 900.dp) {
                 ProductGrid(
-                    products = products,
+                    products = visibleProducts,
                     columns = columns,
                     onAdd = { viewModel.addToCart(it) },
                     modifier = Modifier.padding(padding)
@@ -262,7 +280,7 @@ fun PosScreen(viewModel: AppViewModel, onBack: () -> Unit) {
             cart = cart,
             total = total,
             onIncrease = { item ->
-                val product = products.firstOrNull { it.id == item.productId }
+                val product = visibleProducts.firstOrNull { it.id == item.productId }
                 if (product != null) viewModel.addToCart(product)
             },
             onDecrease = { item -> viewModel.decrease(item) },

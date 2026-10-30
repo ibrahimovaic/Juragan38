@@ -411,7 +411,7 @@ class PosRepository @Inject constructor(
 
         if (user.id.isBlank()) {
             if (password.isNullOrBlank()) return "Password wajib diisi"
-            if (password.length < 5) return "Password minimal 5 karakter"
+            if (password.length < 6) return "Password minimal 6 karakter"
             if (isUsernameTaken(username, "")) return "Username \"$username\" sudah dipakai"
             return createAccount(username, fullName, password, user.role)
         }
@@ -488,6 +488,49 @@ class PosRepository @Inject constructor(
             null
         } catch (e: Exception) {
             e.friendlyMessage()
+        }
+    }
+
+    /**
+     * Ubah password akun. Password lama wajib diisi karena Firebase Auth tidak
+     * mengizinkan penggantian password tanpa verifikasi pemilik akun.
+     *
+     * @return pesan error, atau null bila berhasil.
+     */
+    suspend fun changePassword(
+        user: User,
+        currentPassword: String,
+        newPassword: String
+    ): String? {
+        if (currentPassword.isBlank()) return "Password lama wajib diisi"
+        if (newPassword.length < 6) return "Password baru minimal 6 karakter"
+        if (currentPassword == newPassword) {
+            return "Password baru harus berbeda dari password lama"
+        }
+
+        val helper = try {
+            secondaryAuth()
+        } catch (e: Exception) {
+            return "Gagal menyiapkan layanan akun: ${e.friendlyMessage()}"
+        }
+
+        return try {
+            val result = helper
+                .signInWithEmailAndPassword(emailOf(user.username), currentPassword)
+                .await()
+            val account = result.user ?: return "Akun login tidak ditemukan"
+            account.updatePassword(newPassword).await()
+            null
+        } catch (e: FirebaseAuthInvalidCredentialsException) {
+            "Password lama salah"
+        } catch (e: FirebaseAuthInvalidUserException) {
+            "Akun login tidak ditemukan"
+        } catch (e: FirebaseNetworkException) {
+            "Tidak ada koneksi internet. Coba lagi saat online."
+        } catch (e: Exception) {
+            "Gagal mengubah password: ${e.friendlyMessage()}"
+        } finally {
+            runCatching { helper.signOut() }
         }
     }
 
@@ -746,6 +789,7 @@ class PosRepository @Inject constructor(
         "cost" to cost,
         "stock" to stock.toLong(),
         "image" to image,
+        "outletId" to outletId,
         "updatedAt" to FieldValue.serverTimestamp()
     )
 
@@ -789,7 +833,8 @@ class PosRepository @Inject constructor(
                 price = getDouble("price") ?: 0.0,
                 cost = getDouble("cost") ?: 0.0,
                 stock = (getLong("stock") ?: 0L).toInt(),
-                image = getString("image").orEmpty()
+                image = getString("image").orEmpty(),
+                outletId = getString("outletId").orEmpty()
             )
         } catch (e: Exception) {
             null

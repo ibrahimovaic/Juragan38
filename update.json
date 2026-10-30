@@ -1,9 +1,9 @@
 {
-  "versionCode": 6,
-  "versionName": "1.3.0",
+  "versionCode": 7,
+  "versionName": "1.4.0",
   "apkUrl": "https://raw.githubusercontent.com/ibrahimovaic/Juragan38/main/apk/JURAGAN-38.apk",
   "apkUrlFallback": "https://github.com/ibrahimovaic/Juragan38/raw/main/apk/JURAGAN-38.apk",
-  "notes": "Info versi di menu utama, cek & pasang pembaruan otomatis, shift dinamis, filter laporan, cetak ulang struk.",
+  "notes": "Produk per outlet, ubah password akun, dan perbaikan info versi.",
   "force": false,
-  "publishedAt": "2026-10-29"
+  "publishedAt": "2026-10-30"
 }

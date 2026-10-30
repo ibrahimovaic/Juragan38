@@ -39,7 +39,12 @@ data class Product(
      * - data URI base64 `data:image/jpeg;base64,...` (hasil pilih dari galeri)
      * - kosong = tanpa gambar
      */
-    val image: String = ""
+    val image: String = "",
+    /**
+     * Outlet pemilik produk. Kosong = produk tampil di semua outlet
+     * (produk lama sebelum fitur ini ada).
+     */
+    val outletId: String = ""
 )
 
 @Entity(tableName = "transactions")

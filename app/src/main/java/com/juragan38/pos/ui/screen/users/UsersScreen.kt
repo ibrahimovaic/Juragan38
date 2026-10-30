@@ -1,5 +1,6 @@
 package com.juragan38.pos.ui.screen.users
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,6 +20,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.LockReset
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -42,6 +44,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -57,10 +60,12 @@ import com.juragan38.pos.ui.theme.Green600
 fun UsersScreen(viewModel: AppViewModel, onBack: () -> Unit) {
     val users by viewModel.users.collectAsState()
     val session by viewModel.session.collectAsState()
+    val context = LocalContext.current
 
     var showForm by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<User?>(null) }
     var deleting by remember { mutableStateOf<User?>(null) }
+    var changingPassword by remember { mutableStateOf<User?>(null) }
 
     Scaffold(
         topBar = {
@@ -156,6 +161,13 @@ fun UsersScreen(viewModel: AppViewModel, onBack: () -> Unit) {
                                 color = roleColor(user.role)
                             )
                         }
+                        IconButton(onClick = { changingPassword = user }) {
+                            Icon(
+                                Icons.Default.LockReset,
+                                contentDescription = "Ubah password",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
                         IconButton(
                             onClick = {
                                 editing = user
@@ -229,6 +241,125 @@ fun UsersScreen(viewModel: AppViewModel, onBack: () -> Unit) {
             }
         )
     }
+
+    changingPassword?.let { user ->
+        ChangePasswordDialog(
+            user = user,
+            viewModel = viewModel,
+            onDismiss = { changingPassword = null },
+            onChanged = {
+                changingPassword = null
+                Toast.makeText(
+                    context,
+                    "Password @${user.username} berhasil diubah",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        )
+    }
+}
+
+/**
+ * Dialog ubah password. Password lama wajib diisi karena Firebase Auth
+ * memverifikasi pemilik akun sebelum mengizinkan penggantian password.
+ */
+@Composable
+private fun ChangePasswordDialog(
+    user: User,
+    viewModel: AppViewModel,
+    onDismiss: () -> Unit,
+    onChanged: () -> Unit
+) {
+    var current by remember(user.id) { mutableStateOf("") }
+    var newPassword by remember(user.id) { mutableStateOf("") }
+    var confirm by remember(user.id) { mutableStateOf("") }
+    var saving by remember(user.id) { mutableStateOf(false) }
+    var error by remember(user.id) { mutableStateOf<String?>(null) }
+
+    val mismatch = newPassword.isNotEmpty() && confirm.isNotEmpty() && newPassword != confirm
+    val valid = current.isNotBlank() &&
+        newPassword.length >= 6 &&
+        newPassword == confirm &&
+        !saving
+
+    AlertDialog(
+        onDismissRequest = { if (!saving) onDismiss() },
+        title = { Text("Ubah Password") },
+        text = {
+            Column {
+                Text(
+                    "Akun @${user.username} (${user.fullName})",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = current,
+                    onValueChange = { current = it },
+                    label = { Text("Password lama") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = newPassword,
+                    onValueChange = { newPassword = it },
+                    label = { Text("Password baru (min. 6 karakter)") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = confirm,
+                    onValueChange = { confirm = it },
+                    label = { Text("Ulangi password baru") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    isError = mismatch,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (mismatch) {
+                    Text(
+                        "Konfirmasi password belum sama.",
+                        color = MaterialTheme.colorScheme.error,
+                        fontSize = 11.sp,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+                error?.let {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    "Butuh koneksi internet. Password lama diperlukan untuk memastikan " +
+                        "yang mengubah adalah pemilik akun atau admin yang mengetahuinya.",
+                    fontSize = 10.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    saving = true
+                    error = null
+                    viewModel.changePassword(user, current, newPassword) { err ->
+                        saving = false
+                        if (err == null) onChanged() else error = err
+                    }
+                },
+                enabled = valid
+            ) {
+                Text(if (saving) "Menyimpan..." else "Simpan")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !saving) { Text("Batal") }
+        }
+    )
 }
 
 @Composable
@@ -247,7 +378,7 @@ private fun UserFormDialog(
     val isNew = initial == null
     val valid = fullName.isNotBlank() &&
         username.isNotBlank() &&
-        (!isNew || password.length >= 5)
+        (!isNew || password.length >= 6)
 
     AlertDialog(
         onDismissRequest = { if (!saving) onDismiss() },
@@ -282,14 +413,15 @@ private fun UserFormDialog(
                     OutlinedTextField(
                         value = password,
                         onValueChange = { password = it },
-                        label = { Text("Password (min. 5 karakter)") },
+                        label = { Text("Password (min. 6 karakter)") },
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
                         modifier = Modifier.fillMaxWidth()
                     )
                 } else {
                     Text(
-                        "Password tidak dapat diubah dari sini. Buat akun baru bila karyawan lupa password.",
+                        "Untuk mengganti password, tekan ikon kunci pada daftar akun " +
+                            "(perlu password lama).",
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

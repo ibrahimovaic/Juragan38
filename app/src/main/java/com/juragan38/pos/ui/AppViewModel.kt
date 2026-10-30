@@ -435,6 +435,21 @@ class AppViewModel @Inject constructor(
         }
     }
 
+    /** Ubah password akun (butuh password lama sebagai verifikasi). */
+    fun changePassword(
+        user: User,
+        currentPassword: String,
+        newPassword: String,
+        onResult: (String?) -> Unit
+    ) {
+        viewModelScope.launch {
+            val error = runCatching {
+                repository.changePassword(user, currentPassword, newPassword)
+            }.getOrElse { it.message ?: "Gagal mengubah password" }
+            onResult(error)
+        }
+    }
+
     // ---------------------------------------------------------- transaksi
 
     /** Muat rincian item transaksi (dari cache, atau server bila belum ada). */
