@@ -146,6 +146,7 @@ class AppViewModel @Inject constructor(
 
     fun logout() {
         viewModelScope.launch {
+            repository.stopRealtimeSync()
             repository.logout()
             sessionManager.clear()
             _cart.value = emptyList()
@@ -219,11 +220,11 @@ class AppViewModel @Inject constructor(
 
     fun cartTotal(): Double = _cart.value.sumOf { it.subtotal }
 
-    fun checkout(paymentMethod: String, paidAmount: Double, onDone: (Transaction?) -> Unit) {
+    fun checkout(paymentMethod: String, paidAmount: Double, onDone: (Transaction?, String?) -> Unit) {
         viewModelScope.launch {
             val items = _cart.value
             if (items.isEmpty()) {
-                onDone(null)
+                onDone(null, null)
                 return@launch
             }
             val s = session.value
@@ -236,9 +237,14 @@ class AppViewModel @Inject constructor(
                     outlet = s?.outletName.orEmpty(),
                     shift = settings.value.shiftLabel(s?.shiftKey.orEmpty())
                 )
-            }.getOrNull()
-            if (result != null) _cart.value = emptyList()
-            onDone(result)
+            }
+            val checkout = result.getOrNull()
+            if (checkout == null) {
+                onDone(null, result.exceptionOrNull()?.message ?: "Gagal menyimpan transaksi")
+            } else {
+                _cart.value = emptyList()
+                onDone(checkout.transaction, checkout.syncError)
+            }
         }
     }
 
@@ -470,6 +476,15 @@ class AppViewModel @Inject constructor(
     fun deleteAllTransactions(onResult: (String?) -> Unit) {
         viewModelScope.launch {
             onResult(repository.deleteAllTransactions())
+        }
+    }
+
+    /** Tarik transaksi terbaru dari server + kirim transaksi lokal yang tertunda. */
+    fun refreshTransactions(onResult: (String) -> Unit) {
+        viewModelScope.launch {
+            val message = runCatching { repository.refreshTransactions() }
+                .getOrElse { it.message ?: "Gagal menyegarkan transaksi" }
+            onResult(message)
         }
     }
 }

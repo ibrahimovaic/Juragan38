@@ -8,6 +8,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -19,12 +20,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.ExperimentalMaterialApi
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Print
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.pullrefresh.PullRefreshIndicator
+import androidx.compose.material.pullrefresh.pullRefresh
+import androidx.compose.material.pullrefresh.rememberPullRefreshState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -58,7 +65,7 @@ import com.juragan38.pos.utils.buildReceiptText
 import com.juragan38.pos.utils.toDateTime
 import com.juragan38.pos.utils.toRupiah
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterialApi::class)
 @Composable
 fun TransactionsScreen(viewModel: AppViewModel, onBack: () -> Unit) {
     val transactions by viewModel.transactions.collectAsState()
@@ -70,6 +77,21 @@ fun TransactionsScreen(viewModel: AppViewModel, onBack: () -> Unit) {
     val isAdmin = session?.role == "ADMIN"
     var deleting by remember { mutableStateOf<Transaction?>(null) }
     var confirmDeleteAll by remember { mutableStateOf(false) }
+    var refreshing by remember { mutableStateOf(false) }
+
+    val doRefresh: () -> Unit = {
+        if (!refreshing) {
+            refreshing = true
+            viewModel.refreshTransactions { message ->
+                refreshing = false
+                Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+    val pullRefreshState = rememberPullRefreshState(
+        refreshing = refreshing,
+        onRefresh = doRefresh
+    )
 
     var detail by remember { mutableStateOf<Transaction?>(null) }
     var detailItems by remember { mutableStateOf<List<TransactionItem>>(emptyList()) }
@@ -157,6 +179,17 @@ fun TransactionsScreen(viewModel: AppViewModel, onBack: () -> Unit) {
                     }
                 },
                 actions = {
+                    IconButton(onClick = doRefresh, enabled = !refreshing) {
+                        if (refreshing) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                        } else {
+                            Icon(Icons.Default.Refresh, contentDescription = "Sinkronkan transaksi")
+                        }
+                    }
                     if (isAdmin) {
                         IconButton(
                             onClick = { confirmDeleteAll = true },
@@ -175,27 +208,41 @@ fun TransactionsScreen(viewModel: AppViewModel, onBack: () -> Unit) {
             )
         }
     ) { padding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .pullRefresh(pullRefreshState)
+        ) {
         if (transactions.isEmpty()) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .padding(24.dp),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text("Belum ada transaksi", fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-                Text(
-                    "Transaksi akan muncul setelah pembayaran di menu Kasir",
-                    fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            LazyColumn(modifier = Modifier.fillMaxSize()) {
+                item {
+                    Column(
+                        modifier = Modifier
+                            .fillParentMaxSize()
+                            .padding(24.dp),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text("Belum ada transaksi", fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+                        Text(
+                            "Transaksi akan muncul setelah pembayaran di menu Kasir",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            "Tarik ke bawah atau tekan ikon sinkron untuk memperbarui",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
         } else {
             CenteredContent(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
+                    .fillMaxSize(),
                 maxWidth = 1000.dp
             ) {
                 LazyColumn(
@@ -275,6 +322,13 @@ fun TransactionsScreen(viewModel: AppViewModel, onBack: () -> Unit) {
                     item { Spacer(modifier = Modifier.height(16.dp)) }
                 }
             }
+        }
+            PullRefreshIndicator(
+                refreshing = refreshing,
+                state = pullRefreshState,
+                modifier = Modifier.align(Alignment.TopCenter),
+                contentColor = MaterialTheme.colorScheme.primary
+            )
         }
     }
 

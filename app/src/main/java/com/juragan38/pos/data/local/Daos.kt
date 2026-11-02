@@ -100,6 +100,12 @@ interface TransactionDao {
     @Query("SELECT * FROM transactions ORDER BY timestamp DESC")
     fun all(): Flow<List<Transaction>>
 
+    @Query("SELECT * FROM transactions ORDER BY timestamp DESC")
+    suspend fun allOnce(): List<Transaction>
+
+    @Query("SELECT * FROM transactions WHERE id = :id")
+    suspend fun byId(id: String): Transaction?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(transaction: Transaction)
 

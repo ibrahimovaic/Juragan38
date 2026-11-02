@@ -1,9 +1,9 @@
 {
-  "versionCode": 7,
-  "versionName": "1.4.0",
+  "versionCode": 8,
+  "versionName": "1.4.1",
   "apkUrl": "https://raw.githubusercontent.com/ibrahimovaic/Juragan38/main/apk/JURAGAN-38.apk",
   "apkUrlFallback": "https://github.com/ibrahimovaic/Juragan38/raw/main/apk/JURAGAN-38.apk",
-  "notes": "Produk per outlet, ubah password akun, dan perbaikan info versi.",
+  "notes": "Perbaikan sinkronisasi transaksi kasir + tombol/tarik-untuk-refresh di Riwayat Transaksi.",
   "force": false,
-  "publishedAt": "2026-10-30"
+  "publishedAt": "2026-11-02"
 }

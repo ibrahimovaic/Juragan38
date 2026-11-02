@@ -30,6 +30,8 @@ import com.juragan38.pos.data.local.User
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -40,6 +42,21 @@ import java.io.ByteArrayOutputStream
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
+
+/**
+ * Hasil checkout: transaksi lokal + pesan bila gagal sinkron ke server.
+ * [syncError] null berarti sudah terkirim / masih diantre dan akan dicoba ulang.
+ */
+data class CheckoutResult(
+    val transaction: Transaction,
+    val syncError: String?
+)
+
+private sealed interface UploadResult {
+    data object Success : UploadResult
+    data object Queued : UploadResult
+    data class Failed(val message: String) : UploadResult
+}
 
 /**
  * Room = cache lokal (offline-first), Firestore = sumber data bersama antar HP,
@@ -71,6 +88,7 @@ class PosRepository @Inject constructor(
     private var userReg: ListenerRegistration? = null
     private var outletReg: ListenerRegistration? = null
     private var settingsReg: ListenerRegistration? = null
+    private var syncJob: Job? = null
 
     private val accounts = firestore.collection("users")
     private val productCol = firestore.collection("products")
@@ -96,6 +114,29 @@ class PosRepository @Inject constructor(
         set(value) {
             localPrefs.edit().putBoolean(KEY_SETTINGS_PENDING, value).apply()
         }
+
+    /**
+     * Transaksi yang sudah tersimpan di Room tapi belum dipastikan diterima server.
+     * Disimpan di SharedPreferences supaya tetap bisa dikirim ulang walau aplikasi
+     * sempat ditutup / proses HP dimatikan sebelum antrean Firestore tersimpan.
+     */
+    private fun pendingTransactionIds(): Set<String> =
+        localPrefs.getStringSet(KEY_PENDING_TX, emptySet())?.toSet() ?: emptySet()
+
+    private suspend fun markTransactionPending(id: String) = withContext(Dispatchers.IO) {
+        val ids = pendingTransactionIds().toMutableSet()
+        ids.add(id)
+        // commit() (bukan apply) agar langsung tersimpan sebelum proses bisa mati.
+        localPrefs.edit().putStringSet(KEY_PENDING_TX, ids).commit()
+        Unit
+    }
+
+    private fun clearTransactionPending(id: String) {
+        val ids = pendingTransactionIds().toMutableSet()
+        if (ids.remove(id)) {
+            localPrefs.edit().putStringSet(KEY_PENDING_TX, ids).apply()
+        }
+    }
 
     // ---------------------------------------------------------------- auth
 
@@ -164,7 +205,9 @@ class PosRepository @Inject constructor(
     @Synchronized
     fun startRealtimeSync(scope: CoroutineScope, role: String) {
         if (auth.currentUser == null) return
-        if (productReg != null) return
+        // Selalu pasang ulang listener. Setelah logout, listener Firestore lama
+        // berhenti dan tidak hidup sendiri saat login berikutnya.
+        stopRealtimeSync()
 
         productReg = productCol.addSnapshotListener { snapshot, _ ->
             if (snapshot == null) return@addSnapshotListener
@@ -183,23 +226,37 @@ class PosRepository @Inject constructor(
         transactionReg = transactionCol
             .orderBy("timestamp", Query.Direction.DESCENDING)
             .limit(500)
-            .addSnapshotListener { snapshot, _ ->
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    android.util.Log.w("PosRepository", "Sinkron transaksi gagal", error)
+                    return@addSnapshotListener
+                }
                 if (snapshot == null) return@addSnapshotListener
                 val docs = snapshot.documents
                 val fromCache = snapshot.metadata.isFromCache
                 val mapped = docs.mapNotNull { it.toTransaction() }
                     .filterNot { isDeletedLocally(it.id) }
+                // Hanya dokumen yang sudah benar-benar diterima server yang boleh
+                // dianggap selesai. Dokumen dari cache lokal masih berstatus
+                // "pending write" dan belum tentu sampai ke server.
+                val confirmedIds = docs
+                    .filterNot { it.metadata.hasPendingWrites() }
+                    .map { it.id }
+                    .toSet()
                 scope.launch {
                     if (mapped.isNotEmpty()) transactionDao.upsertAll(mapped)
-                    // Transaksi yang sudah dihapus admin di HP lain ikut dibersihkan.
-                    if (!fromCache) {
+                    confirmedIds.forEach { clearTransactionPending(it) }
+                    // Transaksi yang sudah dihapus admin di HP lain ikut dibersihkan,
+                    // tapi transaksi yang masih menunggu sinkron jangan dihapus.
+                    if (!fromCache && localPrefs.getBoolean(KEY_TX_RECOVERY_DONE, false)) {
                         val serverIds = docs.map { it.id }
-                        val visibleIds = serverIds.filterNot { isDeletedLocally(it) }
-                        if (serverIds.isEmpty()) {
+                        val keepIds = (serverIds.filterNot { isDeletedLocally(it) } +
+                            pendingTransactionIds()).distinct()
+                        if (serverIds.isEmpty() && keepIds.isEmpty()) {
                             transactionDao.clearAllItems()
                             transactionDao.clearAll()
-                        } else if (visibleIds.isNotEmpty()) {
-                            transactionDao.deleteMissing(visibleIds)
+                        } else if (keepIds.isNotEmpty()) {
+                            transactionDao.deleteMissing(keepIds)
                         }
                     }
                 }
@@ -253,6 +310,16 @@ class PosRepository @Inject constructor(
                 }
             }
         }
+
+        // Kirim ulang transaksi lokal yang belum diterima server, lalu cek berkala.
+        syncJob?.cancel()
+        syncJob = scope.launch {
+            recoverRecentTransactionsOnce()
+            while (true) {
+                syncPendingTransactions()
+                delay(SYNC_RETRY_MS)
+            }
+        }
     }
 
     @Synchronized
@@ -267,6 +334,8 @@ class PosRepository @Inject constructor(
         userReg = null
         outletReg = null
         settingsReg = null
+        syncJob?.cancel()
+        syncJob = null
     }
 
     // ------------------------------------------------------------- seeding
@@ -559,7 +628,7 @@ class PosRepository @Inject constructor(
         paidAmount: Double,
         outlet: String,
         shift: String
-    ): Transaction {
+    ): CheckoutResult {
         val total = items.sumOf { it.subtotal }
         val costTotal = items.sumOf { it.cost * it.qty }
         val profit = total - costTotal
@@ -581,21 +650,22 @@ class PosRepository @Inject constructor(
             shift = shift
         )
 
-        // 1) simpan lokal dulu (selalu berhasil walau offline)
+        // 1) simpan lokal dulu (selalu berhasil walau offline). Tandai pending
+        // sebelum proses lain berjalan, agar transaksi tidak pernah hilang.
+        markTransactionPending(id)
         transactionDao.insert(transaction)
-        transactionDao.insertItems(
-            items.map {
-                TransactionItem(
-                    transactionId = id,
-                    productId = it.productId,
-                    productName = it.name,
-                    price = it.price,
-                    cost = it.cost,
-                    qty = it.qty,
-                    subtotal = it.subtotal
-                )
-            }
-        )
+        val transactionItems = items.map {
+            TransactionItem(
+                transactionId = id,
+                productId = it.productId,
+                productName = it.name,
+                price = it.price,
+                cost = it.cost,
+                qty = it.qty,
+                subtotal = it.subtotal
+            )
+        }
+        transactionDao.insertItems(transactionItems)
         items.forEach { item ->
             val current = productDao.byId(item.productId)
             if (current != null) {
@@ -603,48 +673,210 @@ class PosRepository @Inject constructor(
             }
         }
 
-        // 2) kirim ke server (batch atomic, diantre kalau offline)
-        val batch = firestore.batch()
-        batch.set(
-            transactionCol.document(id),
-            mapOf(
-                "invoiceNo" to transaction.invoiceNo,
-                "timestamp" to transaction.timestamp,
-                "cashier" to transaction.cashier,
-                "cashierUid" to (currentUserId() ?: ""),
-                "total" to transaction.total,
-                "costTotal" to transaction.costTotal,
-                "profit" to transaction.profit,
-                "paymentMethod" to transaction.paymentMethod,
-                "paidAmount" to transaction.paidAmount,
-                "changeAmount" to transaction.changeAmount,
-                "outlet" to transaction.outlet,
-                "shift" to transaction.shift,
-                "createdAt" to FieldValue.serverTimestamp()
-            )
+        // 2) kirim ke server. Kalau offline, Firestore mengantre dan transaksi
+        // tetap ditandai pending untuk dicoba ulang otomatis.
+        val result = uploadTransaction(
+            transaction = transaction,
+            items = transactionItems,
+            stockItems = items.map { it.productId to it.qty },
+            checkExisting = false
         )
-        items.forEach { item ->
-            val itemRef = transactionCol.document(id).collection("items").document()
-            batch.set(
-                itemRef,
-                mapOf(
-                    "productId" to item.productId,
-                    "productName" to item.name,
-                    "price" to item.price,
-                    "cost" to item.cost,
-                    "qty" to item.qty,
-                    "subtotal" to item.subtotal
-                )
-            )
-            batch.update(
-                productCol.document(item.productId),
-                "stock",
-                FieldValue.increment(-item.qty.toLong())
+        if (result is UploadResult.Success) clearTransactionPending(id)
+        return CheckoutResult(
+            transaction = transaction,
+            syncError = (result as? UploadResult.Failed)?.message
+        )
+    }
+
+    /**
+     * Kirim transaksi + item + pengurangan stok. Kalau batch lengkap gagal
+     * (mis. produk sudah tidak ada di server), transaksi tetap dikirim tanpa
+     * update stok supaya penjualan tidak hilang.
+     */
+    private suspend fun uploadTransaction(
+        transaction: Transaction,
+        items: List<TransactionItem>,
+        stockItems: List<Pair<String, Int>>,
+        checkExisting: Boolean
+    ): UploadResult {
+        if (checkExisting) {
+            val exists = try {
+                withTimeoutOrNull(CHECK_TIMEOUT_MS) {
+                    transactionCol.document(transaction.id).get(Source.SERVER).await().exists()
+                }
+            } catch (e: Exception) {
+                null
+            }
+            // null = belum bisa cek (offline); biarkan tetap pending.
+            if (exists == null) return UploadResult.Queued
+            // Sudah ada di server -> anggap selesai, jangan kirim ulang.
+            if (exists) return UploadResult.Success
+        }
+
+        val fields = transaction.toFirestoreMap()
+        val full = firestore.batch()
+        full.set(transactionCol.document(transaction.id), fields)
+        items.forEachIndexed { index, item ->
+            full.set(
+                transactionCol.document(transaction.id).collection("items")
+                    .document("item_$index"),
+                item.toFirestoreMap()
             )
         }
-        runCatching { batch.commit() }
+        stockItems.forEach { (productId, qty) ->
+            full.update(
+                productCol.document(productId),
+                "stock",
+                FieldValue.increment(-qty.toLong())
+            )
+        }
 
-        return transaction
+        val fullResult: UploadResult? = try {
+            withTimeoutOrNull(WRITE_TIMEOUT_MS) {
+                full.commit().await()
+                UploadResult.Success
+            }
+        } catch (e: Exception) {
+            UploadResult.Failed(e.friendlyMessage())
+        }
+        if (fullResult == UploadResult.Success) return UploadResult.Success
+        // null = koneksi lambat/offline: Firestore masih mengantre.
+        if (fullResult == null) return UploadResult.Queued
+
+        // Fallback: tanpa update stok, supaya transaksi tetap sampai ke server.
+        val minimal = firestore.batch()
+        minimal.set(transactionCol.document(transaction.id), fields)
+        items.forEachIndexed { index, item ->
+            minimal.set(
+                transactionCol.document(transaction.id).collection("items")
+                    .document("item_$index"),
+                item.toFirestoreMap()
+            )
+        }
+        return try {
+            withTimeoutOrNull(WRITE_TIMEOUT_MS) {
+                minimal.commit().await()
+                UploadResult.Success
+            } ?: UploadResult.Queued
+        } catch (e: Exception) {
+            UploadResult.Failed(e.friendlyMessage())
+        }
+    }
+
+    /** Kirim ulang semua transaksi lokal yang belum dipastikan diterima server. */
+    suspend fun syncPendingTransactions(): String? {
+        if (auth.currentUser == null) return null
+        var lastError: String? = null
+        pendingTransactionIds().toList().forEach { id ->
+            val transaction = transactionDao.byId(id)
+            if (transaction == null) {
+                clearTransactionPending(id)
+                return@forEach
+            }
+            val items = transactionDao.itemsOf(id)
+            val result = uploadTransaction(
+                transaction = transaction,
+                items = items,
+                // Retry tidak mengubah stok lagi supaya tidak dobel potong bila
+                // batch pertama ternyata tetap terkirim di latar belakang.
+                stockItems = emptyList(),
+                checkExisting = true
+            )
+            when (result) {
+                UploadResult.Success -> clearTransactionPending(id)
+                UploadResult.Queued -> Unit
+                is UploadResult.Failed -> lastError = result.message
+            }
+        }
+        return lastError
+    }
+
+    /**
+     * Tarik data transaksi terbaru dari server ke Room, sekaligus kirim ulang
+     * transaksi lokal yang belum tersinkron. Dipakai tombol / tarik-untuk-refresh
+     * di layar Riwayat Transaksi.
+     */
+    suspend fun refreshTransactions(): String {
+        if (auth.currentUser == null) return "Sesi login berakhir. Silakan login ulang."
+
+        val pendingError = syncPendingTransactions()
+
+        val snapshot = try {
+            withTimeoutOrNull(REFRESH_TIMEOUT_MS) {
+                transactionCol
+                    .orderBy("timestamp", Query.Direction.DESCENDING)
+                    .limit(500)
+                    .get(Source.SERVER)
+                    .await()
+            }
+        } catch (e: Exception) {
+            null
+        } ?: return "Tidak ada koneksi internet. Transaksi lokal tetap aman dan akan dicoba lagi."
+
+        val mapped = snapshot.documents
+            .mapNotNull { it.toTransaction() }
+            .filterNot { isDeletedLocally(it.id) }
+        if (mapped.isNotEmpty()) transactionDao.upsertAll(mapped)
+        mapped.forEach { clearTransactionPending(it.id) }
+
+        // Samakan cache dengan server, tapi jangan hapus yang masih pending.
+        val keepIds = (snapshot.documents.map { it.id }
+            .filterNot { isDeletedLocally(it) } + pendingTransactionIds())
+            .distinct()
+        if (keepIds.isEmpty()) {
+            transactionDao.clearAllItems()
+            transactionDao.clearAll()
+        } else {
+            transactionDao.deleteMissing(keepIds)
+        }
+        localPrefs.edit().putBoolean(KEY_TX_RECOVERY_DONE, true).apply()
+
+        return when {
+            pendingError != null ->
+                "Data diperbarui, tapi ada transaksi yang belum terkirim: $pendingError"
+            pendingTransactionIds().isEmpty() -> "Transaksi sudah sinkron dengan server"
+            else -> "Data diperbarui. Transaksi yang menunggu akan dicoba lagi."
+        }
+    }
+
+    /**
+     * Sekali setelah pembaruan: cari transaksi lokal beberapa hari terakhir yang
+     * tidak ada di server (mis. gagal terkirim di versi lama) lalu antrekan ulang.
+     */
+    private suspend fun recoverRecentTransactionsOnce() {
+        if (auth.currentUser == null) return
+        if (localPrefs.getBoolean(KEY_TX_RECOVERY_DONE, false)) return
+
+        val serverIds = try {
+            withTimeoutOrNull(WRITE_TIMEOUT_MS) {
+                transactionCol
+                    .orderBy("timestamp", Query.Direction.DESCENDING)
+                    .limit(500)
+                    .get(Source.SERVER)
+                    .await()
+                    .documents
+                    .map { it.id }
+                    .toSet()
+            }
+        } catch (e: Exception) {
+            null
+        } ?: return // offline: coba lagi nanti, jangan tandai selesai
+
+        val cutoff = System.currentTimeMillis() - RECOVERY_WINDOW_MS
+        val missing = transactionDao.allOnce()
+            .asSequence()
+            .filter { it.timestamp >= cutoff && it.id !in serverIds }
+            .map { it.id }
+            .toList()
+
+        if (missing.isNotEmpty()) {
+            withContext(Dispatchers.IO) {
+                val ids = pendingTransactionIds().toMutableSet()
+                ids.addAll(missing)
+                localPrefs.edit().putStringSet(KEY_PENDING_TX, ids).commit()
+            }
+        }
+        localPrefs.edit().putBoolean(KEY_TX_RECOVERY_DONE, true).apply()
     }
 
     /**
@@ -781,6 +1013,31 @@ class PosRepository @Inject constructor(
         }
 
     // ------------------------------------------------------------ mapping
+
+    private fun Transaction.toFirestoreMap(): Map<String, Any> = mapOf(
+        "invoiceNo" to invoiceNo,
+        "timestamp" to timestamp,
+        "cashier" to cashier,
+        "cashierUid" to (currentUserId() ?: ""),
+        "total" to total,
+        "costTotal" to costTotal,
+        "profit" to profit,
+        "paymentMethod" to paymentMethod,
+        "paidAmount" to paidAmount,
+        "changeAmount" to changeAmount,
+        "outlet" to outlet,
+        "shift" to shift,
+        "createdAt" to FieldValue.serverTimestamp()
+    )
+
+    private fun TransactionItem.toFirestoreMap(): Map<String, Any> = mapOf(
+        "productId" to productId,
+        "productName" to productName,
+        "price" to price,
+        "cost" to cost,
+        "qty" to qty,
+        "subtotal" to subtotal
+    )
 
     private fun Product.toMap(): Map<String, Any> = mapOf(
         "name" to name,
@@ -929,6 +1186,12 @@ class PosRepository @Inject constructor(
     private companion object {
         const val HELPER_APP = "juragan38-helper"
         const val WRITE_TIMEOUT_MS = 12_000L
+        const val CHECK_TIMEOUT_MS = 5_000L
+        const val REFRESH_TIMEOUT_MS = 15_000L
+        const val SYNC_RETRY_MS = 60_000L
+        const val RECOVERY_WINDOW_MS = 7L * 24 * 60 * 60 * 1000
         const val KEY_SETTINGS_PENDING = "settings_pending"
+        const val KEY_PENDING_TX = "pending_transactions"
+        const val KEY_TX_RECOVERY_DONE = "tx_recovery_done"
     }
 }
