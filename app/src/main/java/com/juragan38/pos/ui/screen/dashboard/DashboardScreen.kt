@@ -112,12 +112,6 @@ fun DashboardScreen(
         .filter { seesAllSales || (cashierName.isNotBlank() && it.cashier.equals(cashierName, true)) }
     val todaySales = todayTransactions.sumOf { it.total }
     val todayProfit = todayTransactions.sumOf { it.profit }
-    val todayCash = todayTransactions
-        .filter { it.paymentMethod.equals("TUNAI", true) }
-        .sumOf { it.total }
-    val todayNonCash = todayTransactions
-        .filterNot { it.paymentMethod.equals("TUNAI", true) }
-        .sumOf { it.total }
 
     val twoColumns = isMediumScreen()
 
@@ -237,20 +231,10 @@ fun DashboardScreen(
                 ) {
                     Column(modifier = Modifier.padding(18.dp)) {
                         Text(
-                            if (seesAllSales) "Total Penjualan Hari Ini" else "Penjualan Saya Hari Ini",
+                            "Penjualan Hari Ini",
                             color = MaterialTheme.colorScheme.onPrimary,
                             fontSize = 13.sp
                         )
-                        if (!seesAllSales) {
-                            val shiftLabel = settings.shiftLabel(session?.shiftKey.orEmpty())
-                            if (shiftLabel.isNotBlank()) {
-                                Text(
-                                    "Shift: $shiftLabel",
-                                    color = MaterialTheme.colorScheme.onPrimary,
-                                    fontSize = 11.sp
-                                )
-                            }
-                        }
                         Text(
                             todaySales.toRupiah(),
                             color = MaterialTheme.colorScheme.onPrimary,
@@ -259,15 +243,9 @@ fun DashboardScreen(
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Row(modifier = Modifier.fillMaxWidth()) {
-                            if (seesAllSales) {
-                                SummaryColumn("Laba", todayProfit.toRupiah())
-                                SummaryColumn("Transaksi", "${todayTransactions.size}")
-                                SummaryColumn("Produk", "${products.size}")
-                            } else {
-                                SummaryColumn("Tunai", todayCash.toRupiah())
-                                SummaryColumn("Non-tunai", todayNonCash.toRupiah())
-                                SummaryColumn("Transaksi", "${todayTransactions.size}")
-                            }
+                            SummaryColumn("Laba", todayProfit.toRupiah())
+                            SummaryColumn("Transaksi", "${todayTransactions.size}")
+                            SummaryColumn("Produk", "${products.size}")
                         }
                     }
                 }

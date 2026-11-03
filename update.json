@@ -1,9 +1,9 @@
 {
-  "versionCode": 9,
-  "versionName": "1.4.2",
+  "versionCode": 10,
+  "versionName": "1.4.3",
   "apkUrl": "https://raw.githubusercontent.com/ibrahimovaic/Juragan38/main/apk/JURAGAN-38.apk",
   "apkUrlFallback": "https://github.com/ibrahimovaic/Juragan38/raw/main/apk/JURAGAN-38.apk",
-  "notes": "Menu utama kasir kini hanya menampilkan penjualan miliknya sendiri hari ini (tunai/non-tunai), total penjualan tetap untuk admin & manajer.",
+  "notes": "Menu utama kasir menampilkan penjualan hari ini hanya dari transaksi kasir tersebut; admin & manajer tetap melihat total semua kasir.",
   "force": false,
   "publishedAt": "2026-11-03"
 }
