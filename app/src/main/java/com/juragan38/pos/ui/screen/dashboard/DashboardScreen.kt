@@ -98,11 +98,27 @@ fun DashboardScreen(
     val version = remember(context) { UpdateChecker.installedVersion(context) }
 
     val startOfDay = rememberStartOfDay()
-    val todayTransactions = transactions.filter { it.timestamp >= startOfDay }
+    val role = session?.role ?: "KASIR"
+    val seesAllSales = role == "ADMIN" || role == "MANAJER"
+    val cashierName = session?.fullName?.trim()
+        ?.ifBlank { session?.username.orEmpty().trim() }
+        .orEmpty()
+
+    // Kasir hanya melihat penjualan yang dia kerjakan sendiri hari ini,
+    // supaya mudah mencocokkan uang setoran di akhir shift.
+    // Admin & manajer tetap melihat total seluruh kasir.
+    val todayTransactions = transactions
+        .filter { it.timestamp >= startOfDay }
+        .filter { seesAllSales || (cashierName.isNotBlank() && it.cashier.equals(cashierName, true)) }
     val todaySales = todayTransactions.sumOf { it.total }
     val todayProfit = todayTransactions.sumOf { it.profit }
+    val todayCash = todayTransactions
+        .filter { it.paymentMethod.equals("TUNAI", true) }
+        .sumOf { it.total }
+    val todayNonCash = todayTransactions
+        .filterNot { it.paymentMethod.equals("TUNAI", true) }
+        .sumOf { it.total }
 
-    val role = session?.role ?: "KASIR"
     val twoColumns = isMediumScreen()
 
     val isDark = themeMode == ThemeMode.DARK ||
@@ -221,10 +237,20 @@ fun DashboardScreen(
                 ) {
                     Column(modifier = Modifier.padding(18.dp)) {
                         Text(
-                            "Penjualan Hari Ini",
+                            if (seesAllSales) "Total Penjualan Hari Ini" else "Penjualan Saya Hari Ini",
                             color = MaterialTheme.colorScheme.onPrimary,
                             fontSize = 13.sp
                         )
+                        if (!seesAllSales) {
+                            val shiftLabel = settings.shiftLabel(session?.shiftKey.orEmpty())
+                            if (shiftLabel.isNotBlank()) {
+                                Text(
+                                    "Shift: $shiftLabel",
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
                         Text(
                             todaySales.toRupiah(),
                             color = MaterialTheme.colorScheme.onPrimary,
@@ -233,9 +259,15 @@ fun DashboardScreen(
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Row(modifier = Modifier.fillMaxWidth()) {
-                            SummaryColumn("Laba", todayProfit.toRupiah())
-                            SummaryColumn("Transaksi", "${todayTransactions.size}")
-                            SummaryColumn("Produk", "${products.size}")
+                            if (seesAllSales) {
+                                SummaryColumn("Laba", todayProfit.toRupiah())
+                                SummaryColumn("Transaksi", "${todayTransactions.size}")
+                                SummaryColumn("Produk", "${products.size}")
+                            } else {
+                                SummaryColumn("Tunai", todayCash.toRupiah())
+                                SummaryColumn("Non-tunai", todayNonCash.toRupiah())
+                                SummaryColumn("Transaksi", "${todayTransactions.size}")
+                            }
                         }
                     }
                 }

@@ -1,9 +1,9 @@
 {
-  "versionCode": 8,
-  "versionName": "1.4.1",
+  "versionCode": 9,
+  "versionName": "1.4.2",
   "apkUrl": "https://raw.githubusercontent.com/ibrahimovaic/Juragan38/main/apk/JURAGAN-38.apk",
   "apkUrlFallback": "https://github.com/ibrahimovaic/Juragan38/raw/main/apk/JURAGAN-38.apk",
-  "notes": "Perbaikan sinkronisasi transaksi kasir + tombol/tarik-untuk-refresh di Riwayat Transaksi.",
+  "notes": "Menu utama kasir kini hanya menampilkan penjualan miliknya sendiri hari ini (tunai/non-tunai), total penjualan tetap untuk admin & manajer.",
   "force": false,
-  "publishedAt": "2026-11-02"
+  "publishedAt": "2026-11-03"
 }
