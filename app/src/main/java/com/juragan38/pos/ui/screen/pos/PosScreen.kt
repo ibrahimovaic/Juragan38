@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -121,6 +122,8 @@ fun PosScreen(viewModel: AppViewModel, onBack: () -> Unit) {
     var receipt by remember { mutableStateOf<Transaction?>(null) }
     var receiptItems by remember { mutableStateOf<List<CartItem>>(emptyList()) }
     var receiptSyncError by remember { mutableStateOf<String?>(null) }
+    var receiptPending by remember { mutableStateOf(false) }
+    var savingCheckout by remember { mutableStateOf(false) }
 
     val total = cart.sumOf { it.subtotal }
 
@@ -299,22 +302,48 @@ fun PosScreen(viewModel: AppViewModel, onBack: () -> Unit) {
             total = total,
             onDismiss = { showPayment = false },
             onConfirm = { method, paid ->
-                val snapshot = cart
-                viewModel.checkout(method, paid) { transaction, syncError ->
+                // Jaga-jaga bila tombol tersentuh dua kali sebelum dialog hilang.
+                if (!savingCheckout) {
+                    // Tutup dialog bayar segera supaya kasir tidak melihat pop-up
+                    // "menggantung" saat koneksi lambat / diblokir.
                     showPayment = false
-                    if (transaction == null) {
-                        Toast.makeText(
-                            context,
-                            syncError ?: "Gagal menyimpan transaksi",
-                            Toast.LENGTH_LONG
-                        ).show()
-                    } else {
-                        receiptItems = snapshot
-                        receiptSyncError = syncError
-                        receipt = transaction
+                    savingCheckout = true
+                    val snapshot = cart
+                    viewModel.checkout(method, paid) { transaction, pending, syncError ->
+                        savingCheckout = false
+                        if (transaction == null) {
+                            Toast.makeText(
+                                context,
+                                syncError ?: "Gagal menyimpan transaksi",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        } else {
+                            receiptItems = snapshot
+                            receiptPending = pending
+                            receiptSyncError = syncError
+                            receipt = transaction
+                        }
                     }
                 }
             }
+        )
+    }
+
+    if (savingCheckout) {
+        AlertDialog(
+            onDismissRequest = { },
+            title = { Text("Menyimpan transaksi") },
+            text = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(22.dp),
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text("Transaksi disimpan ke HP terlebih dahulu...", fontSize = 13.sp)
+                }
+            },
+            confirmButton = { }
         )
     }
 
@@ -324,9 +353,11 @@ fun PosScreen(viewModel: AppViewModel, onBack: () -> Unit) {
             cashier = session?.fullName.orEmpty(),
             items = receiptItems,
             outletAddress = outletAddress,
+            pending = receiptPending,
             syncError = receiptSyncError,
             onDismiss = {
                 receipt = null
+                receiptPending = false
                 receiptSyncError = null
             },
             onPrint = {
@@ -662,6 +693,7 @@ private fun ReceiptDialog(
     cashier: String,
     items: List<CartItem>,
     outletAddress: String,
+    pending: Boolean,
     syncError: String?,
     onDismiss: () -> Unit,
     onPrint: () -> Unit
@@ -711,16 +743,22 @@ private fun ReceiptDialog(
                     textAlign = TextAlign.End,
                     modifier = Modifier.fillMaxWidth()
                 )
-                if (syncError != null) {
+                if (pending || syncError != null) {
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        "Tersimpan di HP, tapi belum terkirim ke server: $syncError",
+                        if (syncError != null) {
+                            "Tersimpan di HP, tapi belum terkirim ke server: $syncError"
+                        } else {
+                            "Transaksi tersimpan di HP dan akan dikirim otomatis ke server " +
+                                "saat koneksi tersedia."
+                        },
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.error
                     )
                     Text(
-                        "Transaksi akan dicoba kirim ulang otomatis saat online. " +
-                            "Jangan hapus data aplikasi sebelum tersinkron.",
+                        "Tidak perlu input ulang. Aplikasi mencoba mengirim otomatis " +
+                            "setiap 60 detik dan saat jaringan kembali. " +
+                            "Jangan hapus data aplikasi sebelum transaksi tersinkron.",
                         fontSize = 10.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

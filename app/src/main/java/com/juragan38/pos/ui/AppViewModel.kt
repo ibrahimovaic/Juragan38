@@ -71,6 +71,9 @@ class AppViewModel @Inject constructor(
     val session: StateFlow<Session?> = sessionManager.session
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
+    /** Jumlah transaksi lokal yang belum dipastikan diterima server. */
+    val pendingTransactionCount: StateFlow<Int> = repository.pendingCount
+
     private val _cart = MutableStateFlow<List<CartItem>>(emptyList())
     val cart: StateFlow<List<CartItem>> = _cart.asStateFlow()
 
@@ -220,11 +223,15 @@ class AppViewModel @Inject constructor(
 
     fun cartTotal(): Double = _cart.value.sumOf { it.subtotal }
 
-    fun checkout(paymentMethod: String, paidAmount: Double, onDone: (Transaction?, String?) -> Unit) {
+    fun checkout(
+        paymentMethod: String,
+        paidAmount: Double,
+        onDone: (Transaction?, Boolean, String?) -> Unit
+    ) {
         viewModelScope.launch {
             val items = _cart.value
             if (items.isEmpty()) {
-                onDone(null, null)
+                onDone(null, false, null)
                 return@launch
             }
             val s = session.value
@@ -240,10 +247,14 @@ class AppViewModel @Inject constructor(
             }
             val checkout = result.getOrNull()
             if (checkout == null) {
-                onDone(null, result.exceptionOrNull()?.message ?: "Gagal menyimpan transaksi")
+                onDone(
+                    null,
+                    false,
+                    result.exceptionOrNull()?.message ?: "Gagal menyimpan transaksi"
+                )
             } else {
                 _cart.value = emptyList()
-                onDone(checkout.transaction, checkout.syncError)
+                onDone(checkout.transaction, checkout.pending, checkout.syncError)
             }
         }
     }

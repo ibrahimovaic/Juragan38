@@ -3,6 +3,10 @@ package com.juragan38.pos.data.repository
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.Uri
 import android.util.Base64
 import com.google.firebase.FirebaseApp
@@ -31,8 +35,12 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
@@ -49,6 +57,7 @@ import javax.inject.Singleton
  */
 data class CheckoutResult(
     val transaction: Transaction,
+    val pending: Boolean,
     val syncError: String?
 )
 
@@ -89,6 +98,21 @@ class PosRepository @Inject constructor(
     private var outletReg: ListenerRegistration? = null
     private var settingsReg: ListenerRegistration? = null
     private var syncJob: Job? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+
+    /** Upload berjalan di scope sendiri supaya tidak ikut batal saat layar ditutup. */
+    private val uploadScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    private val _pendingCount = MutableStateFlow(0)
+    val pendingCount: StateFlow<Int> = _pendingCount.asStateFlow()
+
+    /**
+     * Penanda bahwa pengecekan transaksi lama sudah selesai di proses ini.
+     * Disimpan di memori (bukan preferensi) supaya setiap aplikasi dibuka,
+     * transaksi yang tertinggal tetap dicari dan diantrekan ulang.
+     */
+    @Volatile
+    private var recoveryDone = false
 
     private val accounts = firestore.collection("users")
     private val productCol = firestore.collection("products")
@@ -123,19 +147,31 @@ class PosRepository @Inject constructor(
     private fun pendingTransactionIds(): Set<String> =
         localPrefs.getStringSet(KEY_PENDING_TX, emptySet())?.toSet() ?: emptySet()
 
+    /** Kunci agar perubahan daftar pending tidak saling menimpa antar-coroutine. */
+    private val pendingLock = Any()
+
     private suspend fun markTransactionPending(id: String) = withContext(Dispatchers.IO) {
-        val ids = pendingTransactionIds().toMutableSet()
-        ids.add(id)
-        // commit() (bukan apply) agar langsung tersimpan sebelum proses bisa mati.
-        localPrefs.edit().putStringSet(KEY_PENDING_TX, ids).commit()
-        Unit
+        synchronized(pendingLock) {
+            val ids = pendingTransactionIds().toMutableSet()
+            ids.add(id)
+            // commit() (bukan apply) agar langsung tersimpan sebelum proses bisa mati.
+            localPrefs.edit().putStringSet(KEY_PENDING_TX, ids).commit()
+            _pendingCount.value = ids.size
+        }
     }
 
     private fun clearTransactionPending(id: String) {
-        val ids = pendingTransactionIds().toMutableSet()
-        if (ids.remove(id)) {
-            localPrefs.edit().putStringSet(KEY_PENDING_TX, ids).apply()
+        synchronized(pendingLock) {
+            val ids = pendingTransactionIds().toMutableSet()
+            if (ids.remove(id)) {
+                localPrefs.edit().putStringSet(KEY_PENDING_TX, ids).commit()
+                _pendingCount.value = ids.size
+            }
         }
+    }
+
+    private fun refreshPendingCount() {
+        _pendingCount.value = pendingTransactionIds().size
     }
 
     // ---------------------------------------------------------------- auth
@@ -208,6 +244,7 @@ class PosRepository @Inject constructor(
         // Selalu pasang ulang listener. Setelah logout, listener Firestore lama
         // berhenti dan tidak hidup sendiri saat login berikutnya.
         stopRealtimeSync()
+        refreshPendingCount()
 
         productReg = productCol.addSnapshotListener { snapshot, _ ->
             if (snapshot == null) return@addSnapshotListener
@@ -248,7 +285,7 @@ class PosRepository @Inject constructor(
                     confirmedIds.forEach { clearTransactionPending(it) }
                     // Transaksi yang sudah dihapus admin di HP lain ikut dibersihkan,
                     // tapi transaksi yang masih menunggu sinkron jangan dihapus.
-                    if (!fromCache && localPrefs.getBoolean(KEY_TX_RECOVERY_DONE, false)) {
+                    if (!fromCache && recoveryDone) {
                         val serverIds = docs.map { it.id }
                         val keepIds = (serverIds.filterNot { isDeletedLocally(it) } +
                             pendingTransactionIds()).distinct()
@@ -314,12 +351,39 @@ class PosRepository @Inject constructor(
         // Kirim ulang transaksi lokal yang belum diterima server, lalu cek berkala.
         syncJob?.cancel()
         syncJob = scope.launch {
-            recoverRecentTransactionsOnce()
             while (true) {
+                if (!recoveryDone) recoverRecentTransactionsOnce()
                 syncPendingTransactions()
                 delay(SYNC_RETRY_MS)
             }
         }
+
+        // Begitu jaringan (Wi-Fi/data seluler) tersedia lagi, langsung kirim
+        // antrean transaksi tanpa menunggu timer 60 detik.
+        registerNetworkCallback(scope)
+    }
+
+    private fun registerNetworkCallback(scope: CoroutineScope) {
+        unregisterNetworkCallback()
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            ?: return
+        val request = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                scope.launch { syncPendingTransactions() }
+            }
+        }
+        networkCallback = callback
+        runCatching { cm.registerNetworkCallback(request, callback) }
+    }
+
+    private fun unregisterNetworkCallback() {
+        val callback = networkCallback ?: return
+        networkCallback = null
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        runCatching { cm?.unregisterNetworkCallback(callback) }
     }
 
     @Synchronized
@@ -336,6 +400,7 @@ class PosRepository @Inject constructor(
         settingsReg = null
         syncJob?.cancel()
         syncJob = null
+        unregisterNetworkCallback()
     }
 
     // ------------------------------------------------------------- seeding
@@ -673,19 +738,44 @@ class PosRepository @Inject constructor(
             }
         }
 
-        // 2) kirim ke server. Kalau offline, Firestore mengantre dan transaksi
-        // tetap ditandai pending untuk dicoba ulang otomatis.
-        val result = uploadTransaction(
-            transaction = transaction,
-            items = transactionItems,
-            stockItems = items.map { it.productId to it.qty },
-            checkExisting = false
-        )
-        if (result is UploadResult.Success) clearTransactionPending(id)
-        return CheckoutResult(
-            transaction = transaction,
-            syncError = (result as? UploadResult.Failed)?.message
-        )
+        // 2) Simpan lokal sudah selesai; kirim ke server tanpa membuat kasir
+        // menunggu lama. Kalau jaringan lambat / DNS Wi-Fi memblokir server,
+        // transaksi tetap aman dan dikirim ulang di latar belakang.
+        val fastResult: UploadResult? = try {
+            withTimeoutOrNull(FAST_UPLOAD_TIMEOUT_MS) {
+                uploadTransaction(
+                    transaction = transaction,
+                    items = transactionItems,
+                    stockItems = items.map { it.productId to it.qty },
+                    checkExisting = false
+                )
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            UploadResult.Failed(e.friendlyMessage())
+        }
+
+        return when (fastResult) {
+            UploadResult.Success -> {
+                clearTransactionPending(id)
+                refreshPendingCount()
+                CheckoutResult(transaction = transaction, pending = false, syncError = null)
+            }
+            is UploadResult.Failed -> {
+                uploadScope.launch { syncPendingTransactions() }
+                CheckoutResult(
+                    transaction = transaction,
+                    pending = true,
+                    syncError = fastResult.message
+                )
+            }
+            // null / Queued: belum terkirim (offline atau koneksi lambat).
+            null, UploadResult.Queued -> {
+                uploadScope.launch { syncPendingTransactions() }
+                CheckoutResult(transaction = transaction, pending = true, syncError = null)
+            }
+        }
     }
 
     /**
@@ -704,6 +794,8 @@ class PosRepository @Inject constructor(
                 withTimeoutOrNull(CHECK_TIMEOUT_MS) {
                     transactionCol.document(transaction.id).get(Source.SERVER).await().exists()
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 null
             }
@@ -736,6 +828,8 @@ class PosRepository @Inject constructor(
                 full.commit().await()
                 UploadResult.Success
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             UploadResult.Failed(e.friendlyMessage())
         }
@@ -758,6 +852,8 @@ class PosRepository @Inject constructor(
                 minimal.commit().await()
                 UploadResult.Success
             } ?: UploadResult.Queued
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             UploadResult.Failed(e.friendlyMessage())
         }
@@ -811,7 +907,12 @@ class PosRepository @Inject constructor(
             }
         } catch (e: Exception) {
             null
-        } ?: return "Tidak ada koneksi internet. Transaksi lokal tetap aman dan akan dicoba lagi."
+        } ?: run {
+            refreshPendingCount()
+            return "Tidak bisa menghubungi server. Jika Wi-Fi ini memblokir server, " +
+                "nyalakan data seluler / Private DNS (dns.google) lalu tekan Sinkron lagi. " +
+                "Transaksi lokal tetap aman dan akan dikirim otomatis."
+        }
 
         val mapped = snapshot.documents
             .mapNotNull { it.toTransaction() }
@@ -829,7 +930,8 @@ class PosRepository @Inject constructor(
         } else {
             transactionDao.deleteMissing(keepIds)
         }
-        localPrefs.edit().putBoolean(KEY_TX_RECOVERY_DONE, true).apply()
+        recoveryDone = true
+        refreshPendingCount()
 
         return when {
             pendingError != null ->
@@ -845,7 +947,7 @@ class PosRepository @Inject constructor(
      */
     private suspend fun recoverRecentTransactionsOnce() {
         if (auth.currentUser == null) return
-        if (localPrefs.getBoolean(KEY_TX_RECOVERY_DONE, false)) return
+        if (recoveryDone) return
 
         val serverIds = try {
             withTimeoutOrNull(WRITE_TIMEOUT_MS) {
@@ -871,12 +973,15 @@ class PosRepository @Inject constructor(
 
         if (missing.isNotEmpty()) {
             withContext(Dispatchers.IO) {
-                val ids = pendingTransactionIds().toMutableSet()
-                ids.addAll(missing)
-                localPrefs.edit().putStringSet(KEY_PENDING_TX, ids).commit()
+                synchronized(pendingLock) {
+                    val ids = pendingTransactionIds().toMutableSet()
+                    ids.addAll(missing)
+                    localPrefs.edit().putStringSet(KEY_PENDING_TX, ids).commit()
+                    _pendingCount.value = ids.size
+                }
             }
         }
-        localPrefs.edit().putBoolean(KEY_TX_RECOVERY_DONE, true).apply()
+        recoveryDone = true
     }
 
     /**
@@ -1169,13 +1274,17 @@ class PosRepository @Inject constructor(
 
     private fun Throwable.friendlyMessage(): String = when (this) {
         is FirebaseNetworkException -> "Tidak ada koneksi internet. Coba lagi saat online."
+        is java.net.UnknownHostException ->
+            "Server tidak bisa ditemukan (DNS diblokir jaringan). " +
+                "Gunakan data seluler atau Private DNS (dns.google), lalu tekan Sinkron."
         is FirebaseAuthUserCollisionException -> "Username sudah dipakai"
         is FirebaseFirestoreException -> when (code) {
             FirebaseFirestoreException.Code.PERMISSION_DENIED ->
                 "Akses ditolak server. Pastikan firestore.rules terbaru sudah di-publish " +
                     "di Firebase Console (Firestore Database > Rules > Publish)."
             FirebaseFirestoreException.Code.UNAVAILABLE ->
-                "Tidak ada koneksi internet. Coba lagi saat online."
+                "Server tidak bisa dihubungi. Jika Wi-Fi ini memblokir server, " +
+                    "gunakan data seluler atau Private DNS (dns.google), lalu tekan Sinkron."
             FirebaseFirestoreException.Code.UNAUTHENTICATED ->
                 "Sesi login berakhir. Silakan login ulang."
             else -> message ?: "Gagal mengakses server, coba lagi"
@@ -1186,12 +1295,12 @@ class PosRepository @Inject constructor(
     private companion object {
         const val HELPER_APP = "juragan38-helper"
         const val WRITE_TIMEOUT_MS = 12_000L
+        const val FAST_UPLOAD_TIMEOUT_MS = 4_000L
         const val CHECK_TIMEOUT_MS = 5_000L
         const val REFRESH_TIMEOUT_MS = 15_000L
         const val SYNC_RETRY_MS = 60_000L
-        const val RECOVERY_WINDOW_MS = 7L * 24 * 60 * 60 * 1000
+        const val RECOVERY_WINDOW_MS = 30L * 24 * 60 * 60 * 1000
         const val KEY_SETTINGS_PENDING = "settings_pending"
         const val KEY_PENDING_TX = "pending_transactions"
-        const val KEY_TX_RECOVERY_DONE = "tx_recovery_done"
     }
 }

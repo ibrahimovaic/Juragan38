@@ -1,9 +1,9 @@
 {
-  "versionCode": 10,
-  "versionName": "1.4.3",
+  "versionCode": 11,
+  "versionName": "1.4.4",
   "apkUrl": "https://raw.githubusercontent.com/ibrahimovaic/Juragan38/main/apk/JURAGAN-38.apk",
   "apkUrlFallback": "https://github.com/ibrahimovaic/Juragan38/raw/main/apk/JURAGAN-38.apk",
-  "notes": "Menu utama kasir menampilkan penjualan hari ini hanya dari transaksi kasir tersebut; admin & manajer tetap melihat total semua kasir.",
+  "notes": "Transaksi offline lebih aman: pop-up bayar langsung tertutup, transaksi disimpan ke HP lebih dulu lalu dikirim otomatis ke server saat koneksi kembali. Ada indikator transaksi belum terkirim dan tombol Sinkron sekarang di menu utama.",
   "force": false,
-  "publishedAt": "2026-11-03"
+  "publishedAt": "2026-11-04"
 }

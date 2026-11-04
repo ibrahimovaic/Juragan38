@@ -1,5 +1,6 @@
 package com.juragan38.pos.ui.screen.dashboard
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -25,6 +26,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material.icons.filled.SystemUpdate
@@ -48,7 +50,9 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -93,6 +97,8 @@ fun DashboardScreen(
     val settings by viewModel.settings.collectAsState()
     val themeMode by viewModel.themeMode.collectAsState()
     val updateState by viewModel.updateState.collectAsState()
+    val pendingCount by viewModel.pendingTransactionCount.collectAsState()
+    var syncing by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
     val version = remember(context) { UpdateChecker.installedVersion(context) }
@@ -246,6 +252,61 @@ fun DashboardScreen(
                             SummaryColumn("Laba", todayProfit.toRupiah())
                             SummaryColumn("Transaksi", "${todayTransactions.size}")
                             SummaryColumn("Produk", "${products.size}")
+                        }
+                    }
+                }
+
+                if (pendingCount > 0) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Text(
+                                "$pendingCount transaksi belum terkirim ke server",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                "Transaksi sudah tersimpan aman di HP ini. Aplikasi " +
+                                    "mengirim otomatis setiap 60 detik dan saat jaringan " +
+                                    "kembali. Jika Wi-Fi memblokir server, coba data " +
+                                    "seluler atau Private DNS dns.google.",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Button(
+                                onClick = {
+                                    syncing = true
+                                    viewModel.refreshTransactions { message ->
+                                        syncing = false
+                                        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                                    }
+                                },
+                                enabled = !syncing
+                            ) {
+                                if (syncing) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp
+                                    )
+                                    Spacer(modifier = Modifier.size(8.dp))
+                                } else {
+                                    Icon(
+                                        Icons.Default.Refresh,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.size(8.dp))
+                                }
+                                Text(if (syncing) "Mengirim..." else "Sinkron sekarang")
+                            }
                         }
                     }
                 }
